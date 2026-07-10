@@ -25,6 +25,13 @@ and Node (expected at `~/.local/node`, or on PATH).
 docker compose up --build
 ```
 
-Serves the whole app on http://localhost:8000. The SQLite database lives in
-`./data/` on the host in both modes; bank CSV exports and the database are
-gitignored and must never be committed.
+Serves the whole app on http://localhost:8000.
+
+## Where the data lives
+
+All financial data stays outside the repository, in `~/FinanceData/`
+(override with the `DATA_DIR` env var): the SQLite database at its root and
+bank CSV exports in `bank-exports/`. Import CSVs through the app's drop-zone
+directly from wherever they were downloaded — they never need to enter the
+project folder. Nothing under the project directory holds financial data,
+and export formats are gitignored as a second line of defence.

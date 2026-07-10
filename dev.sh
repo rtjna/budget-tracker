@@ -4,6 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 export PATH="$HOME/.local/node/bin:$PATH"
+export DATA_DIR="${DATA_DIR:-$HOME/FinanceData}"
 
 backend/.venv/bin/uvicorn app.main:app --app-dir backend --port 8000 --reload &
 BACKEND_PID=$!

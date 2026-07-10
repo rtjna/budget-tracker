@@ -25,6 +25,9 @@ dist/
 backups/
 data/
 
+# Claude Code personal settings
+.claude/settings.local.json
+
 # OS / editor
 .DS_Store
 .idea/
