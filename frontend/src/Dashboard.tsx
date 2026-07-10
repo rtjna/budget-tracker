@@ -327,7 +327,11 @@ function StackedColumns({
   }
   const segFill = (id: number) =>
     id === 0 ? 'var(--series-uncat)' : id === -1 ? SERIES_VARS[7] : SERIES_VARS[slots.get(id) ?? 7]
-  const segName = (id: number) => (id === 0 ? 'Uncategorized' : id === -1 ? 'Other' : seriesName(id))
+  // id -1 is the dashboard's rollup of everything outside the top slots —
+  // named "Smaller categories" to avoid colliding with the user's real
+  // category called "Other".
+  const segName = (id: number) =>
+    id === 0 ? 'Uncategorized' : id === -1 ? 'Smaller categories' : seriesName(id)
 
   const hovered = hover ? months.find((m) => m.month === hover) : null
 
@@ -342,7 +346,7 @@ function StackedColumns({
         ))}
         <span className="legend-item">
           <span className="swatch" style={{ background: SERIES_VARS[7] }} />
-          Other
+          Smaller categories
         </span>
         <span className="legend-item">
           <span className="swatch" style={{ background: 'var(--series-uncat)' }} />
@@ -435,7 +439,7 @@ function StackedColumns({
                 {seriesName(id)}
               </th>
             ))}
-            <th className="num">Other</th>
+            <th className="num">Smaller categories</th>
             <th className="num">Uncategorized</th>
             <th className="num">Total</th>
           </tr>
