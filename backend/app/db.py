@@ -24,3 +24,24 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def ensure_columns() -> None:
+    """Minimal forward-only migration: add columns create_all won't add to
+    existing tables. Replace with Alembic once the schema stabilizes."""
+    from sqlalchemy import text
+
+    added = {
+        "transactions": {
+            "merchant": "VARCHAR",
+            "category_source": "VARCHAR",
+        }
+    }
+    with engine.begin() as conn:
+        for table, columns in added.items():
+            existing = {
+                row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))
+            }
+            for name, ddl_type in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))

@@ -53,11 +53,28 @@ class Transaction(Base):
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     description: Mapped[str] = mapped_column(String)
+    # Normalized merchant key for grouping/rules/ML features.
+    merchant: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
     # Signed: negative = money out, positive = money in, on every account type.
     amount: Mapped[float] = mapped_column(Numeric(12, 2))
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    # Provenance of the categorization: human | rule | model | llm.
+    category_source: Mapped[str | None] = mapped_column(String, nullable=True)
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
     fingerprint: Mapped[str] = mapped_column(String, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     account: Mapped[Account] = relationship(back_populates="transactions")
+
+
+class Rule(Base):
+    __tablename__ = "rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # contains = case-insensitive substring on description; regex = re.search.
+    match: Mapped[str] = mapped_column(String, default="contains")
+    pattern: Mapped[str] = mapped_column(String)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("match", "pattern"),)

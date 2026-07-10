@@ -11,13 +11,24 @@ type Account = {
   latest_transaction: string | null
 }
 
+type Category = { id: number; name: string; parent_id: number | null }
+
 type Tx = {
   id: number
   account_id: number
   date: string
   description: string
+  merchant: string | null
   amount: number
   category_id: number | null
+  category_source: string | null
+}
+
+type ReviewGroup = {
+  merchant: string
+  count: number
+  sample_description: string
+  latest: string
 }
 
 type ImportResult = {
@@ -51,18 +62,54 @@ function daysAgo(iso: string | null): string {
   return `${days} days ago`
 }
 
+function CategorySelect({
+  categories,
+  value,
+  onChange,
+  placeholder = 'Pick category…',
+}: {
+  categories: Category[]
+  value: number | ''
+  onChange: (id: number | null) => void
+  placeholder?: string
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+    >
+      <option value="">{placeholder}</option>
+      {categories.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 export default function App() {
+  const [tab, setTab] = useState<'transactions' | 'review'>('transactions')
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [txs, setTxs] = useState<Tx[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   const [accountFilter, setAccountFilter] = useState<number | ''>('')
+  const [onlyUncategorized, setOnlyUncategorized] = useState(false)
+  const [review, setReview] = useState<ReviewGroup[]>([])
+  const [reviewTotal, setReviewTotal] = useState(0)
   const [imports, setImports] = useState<ImportResult[]>([])
   const [dragging, setDragging] = useState(false)
 
-  const loadAccounts = useCallback(async () => {
-    setAccounts(await (await fetch('/api/accounts')).json())
+  const loadStatic = useCallback(async () => {
+    const [acc, cats] = await Promise.all([
+      fetch('/api/accounts').then((r) => r.json()),
+      fetch('/api/categories').then((r) => r.json()),
+    ])
+    setAccounts(acc)
+    setCategories(cats)
   }, [])
 
   const loadTxs = useCallback(async () => {
@@ -72,14 +119,22 @@ export default function App() {
     })
     if (search) params.set('search', search)
     if (accountFilter !== '') params.set('account_id', String(accountFilter))
+    if (onlyUncategorized) params.set('uncategorized', 'true')
     const data = await (await fetch(`/api/transactions?${params}`)).json()
     setTxs(data.items)
     setTotal(data.total)
-  }, [page, search, accountFilter])
+  }, [page, search, accountFilter, onlyUncategorized])
+
+  const loadReview = useCallback(async () => {
+    const data = await (await fetch('/api/review')).json()
+    setReview(data.groups)
+    setReviewTotal(data.total_uncategorized)
+  }, [])
 
   useEffect(() => {
-    loadAccounts()
-  }, [loadAccounts])
+    loadStatic()
+    loadReview()
+  }, [loadStatic, loadReview])
 
   useEffect(() => {
     loadTxs()
@@ -108,7 +163,30 @@ export default function App() {
     }
     setImports(results)
     setPage(0)
-    await Promise.all([loadAccounts(), loadTxs()])
+    await Promise.all([loadStatic(), loadTxs(), loadReview()])
+  }
+
+  async function categorizeTx(tx: Tx, categoryId: number | null) {
+    await fetch(`/api/transactions/${tx.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category_id: categoryId }),
+    })
+    await Promise.all([loadTxs(), loadReview()])
+  }
+
+  async function assignGroup(group: ReviewGroup, categoryId: number | null, createRule: boolean) {
+    if (categoryId === null) return
+    await fetch('/api/review/assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        merchant: group.merchant,
+        category_id: categoryId,
+        create_rule: createRule,
+      }),
+    })
+    await Promise.all([loadTxs(), loadReview()])
   }
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -170,63 +248,160 @@ export default function App() {
         </section>
       )}
 
-      <section className="filters">
-        <input
-          placeholder="Search description…"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value)
-            setPage(0)
-          }}
-        />
-        <select
-          value={accountFilter}
-          onChange={(e) => {
-            setAccountFilter(e.target.value === '' ? '' : Number(e.target.value))
-            setPage(0)
-          }}
+      <nav className="tabs">
+        <button
+          className={tab === 'transactions' ? 'active' : ''}
+          onClick={() => setTab('transactions')}
         >
-          <option value="">All accounts</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-      </section>
-
-      <table className="tx-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Description</th>
-            <th className="num">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {txs.map((t) => (
-            <tr key={t.id}>
-              <td>{t.date}</td>
-              <td>{t.description}</td>
-              <td className={`num ${t.amount < 0 ? 'out' : 'in'}`}>
-                {money(t.amount, accounts.find((a) => a.id === t.account_id)?.currency ?? 'GBP')}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <footer className="pager">
-        <button disabled={page === 0} onClick={() => setPage(page - 1)}>
-          ← Prev
+          Transactions
         </button>
-        <span>
-          Page {page + 1} of {pageCount} ({total} transactions)
-        </span>
-        <button disabled={page + 1 >= pageCount} onClick={() => setPage(page + 1)}>
-          Next →
+        <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>
+          Review{reviewTotal > 0 ? ` (${reviewTotal})` : ''}
         </button>
-      </footer>
+      </nav>
+
+      {tab === 'transactions' && (
+        <>
+          <section className="filters">
+            <input
+              placeholder="Search description…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(0)
+              }}
+            />
+            <select
+              value={accountFilter}
+              onChange={(e) => {
+                setAccountFilter(e.target.value === '' ? '' : Number(e.target.value))
+                setPage(0)
+              }}
+            >
+              <option value="">All accounts</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={onlyUncategorized}
+                onChange={(e) => {
+                  setOnlyUncategorized(e.target.checked)
+                  setPage(0)
+                }}
+              />
+              uncategorized
+            </label>
+          </section>
+
+          <table className="tx-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th className="num">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {txs.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.date}</td>
+                  <td>{t.description}</td>
+                  <td>
+                    <span className="cat-cell">
+                      <CategorySelect
+                        categories={categories}
+                        value={t.category_id ?? ''}
+                        onChange={(id) => categorizeTx(t, id)}
+                        placeholder="—"
+                      />
+                      {t.category_source && t.category_source !== 'human' && (
+                        <span className="source-badge">{t.category_source}</span>
+                      )}
+                    </span>
+                  </td>
+                  <td className={`num ${t.amount < 0 ? 'out' : 'in'}`}>
+                    {money(t.amount, accounts.find((a) => a.id === t.account_id)?.currency ?? 'GBP')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <footer className="pager">
+            <button disabled={page === 0} onClick={() => setPage(page - 1)}>
+              ← Prev
+            </button>
+            <span>
+              Page {page + 1} of {pageCount} ({total} transactions)
+            </span>
+            <button disabled={page + 1 >= pageCount} onClick={() => setPage(page + 1)}>
+              Next →
+            </button>
+          </footer>
+        </>
+      )}
+
+      {tab === 'review' && (
+        <section className="review">
+          <p className="review-intro">
+            {reviewTotal === 0
+              ? 'Nothing to review — everything is categorized. 🎉'
+              : `${reviewTotal} uncategorized transactions, grouped by merchant. ` +
+                'Assigning also creates a rule so future imports categorize themselves.'}
+          </p>
+          {review.map((g) => (
+            <ReviewRow
+              key={g.merchant}
+              group={g}
+              categories={categories}
+              onAssign={assignGroup}
+            />
+          ))}
+        </section>
+      )}
     </main>
+  )
+}
+
+function ReviewRow({
+  group,
+  categories,
+  onAssign,
+}: {
+  group: ReviewGroup
+  categories: Category[]
+  onAssign: (g: ReviewGroup, categoryId: number | null, createRule: boolean) => void
+}) {
+  const [createRule, setCreateRule] = useState(true)
+  return (
+    <div className="review-row">
+      <div className="review-merchant">
+        <strong>{group.merchant}</strong>
+        <span className="review-meta">
+          {group.count}× · last {group.latest} · e.g. “{group.sample_description}”
+        </span>
+      </div>
+      <div className="review-actions">
+        <CategorySelect
+          categories={categories}
+          value={''}
+          onChange={(id) => onAssign(group, id, createRule)}
+        />
+        <label className="checkbox" title="Create a rule so future imports auto-categorize">
+          <input
+            type="checkbox"
+            checked={createRule}
+            onChange={(e) => setCreateRule(e.target.checked)}
+          />
+          always
+        </label>
+      </div>
+    </div>
   )
 }

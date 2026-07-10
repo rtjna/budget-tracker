@@ -6,6 +6,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .categorize import apply_rules, normalize_merchant
 from .importers import detect_importer
 from .importers.base import ParsedRow
 from .models import Account, ImportBatch, Transaction
@@ -85,21 +86,24 @@ def import_file(db: Session, filename: str, text: str) -> ImportBatch:
     db.add(batch)
     db.flush()
 
+    created: list[Transaction] = []
     for fp, account_id, row in candidates:
         if fp in existing:
             batch.duplicate_count += 1
             continue
-        db.add(
-            Transaction(
-                account_id=account_id,
-                date=row.date,
-                description=row.description,
-                amount=row.amount,
-                import_batch_id=batch.id,
-                fingerprint=fp,
-            )
+        tx = Transaction(
+            account_id=account_id,
+            date=row.date,
+            description=row.description,
+            merchant=normalize_merchant(row.description),
+            amount=row.amount,
+            import_batch_id=batch.id,
+            fingerprint=fp,
         )
+        db.add(tx)
+        created.append(tx)
         batch.new_count += 1
 
+    apply_rules(db, created)
     db.commit()
     return batch
