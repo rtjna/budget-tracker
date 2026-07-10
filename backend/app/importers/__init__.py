@@ -1,7 +1,9 @@
 from .amex import AmexImporter
+from .barclays import BarclaysImporter
 from .base import BankImporter, ParsedRow
+from .revolut import RevolutImporter
 
-IMPORTERS: list[BankImporter] = [AmexImporter()]
+IMPORTERS: list[BankImporter] = [AmexImporter(), BarclaysImporter(), RevolutImporter()]
 
 
 def detect_importer(header: list[str], sample_rows: list[list[str]]) -> BankImporter | None:
