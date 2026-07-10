@@ -174,6 +174,7 @@ def list_accounts(db: Session = Depends(get_db)):
 def list_transactions(
     db: Session = Depends(get_db),
     account_id: int | None = None,
+    category_id: int | None = None,
     search: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -184,6 +185,8 @@ def list_transactions(
     query = select(models.Transaction)
     if account_id is not None:
         query = query.where(models.Transaction.account_id == account_id)
+    if category_id is not None:
+        query = query.where(models.Transaction.category_id == category_id)
     if search:
         query = query.where(or_(models.Transaction.description.icontains(search)))
     if date_from is not None:

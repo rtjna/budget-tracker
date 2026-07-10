@@ -99,6 +99,7 @@ export default function App() {
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   const [accountFilter, setAccountFilter] = useState<number | ''>('')
+  const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
   const [onlyUncategorized, setOnlyUncategorized] = useState(false)
   const [review, setReview] = useState<ReviewGroup[]>([])
   const [reviewTotal, setReviewTotal] = useState(0)
@@ -128,11 +129,12 @@ export default function App() {
     })
     if (search) params.set('search', search)
     if (accountFilter !== '') params.set('account_id', String(accountFilter))
+    if (categoryFilter !== '') params.set('category_id', String(categoryFilter))
     if (onlyUncategorized) params.set('uncategorized', 'true')
     const data = await (await fetch(`/api/transactions?${params}`)).json()
     setTxs(data.items)
     setTotal(data.total)
-  }, [page, search, accountFilter, onlyUncategorized])
+  }, [page, search, accountFilter, categoryFilter, onlyUncategorized])
 
   const loadReview = useCallback(async () => {
     const data = await (await fetch('/api/review')).json()
@@ -299,6 +301,15 @@ export default function App() {
                 </option>
               ))}
             </select>
+            <CategorySelect
+              categories={categories}
+              value={categoryFilter}
+              onChange={(id) => {
+                setCategoryFilter(id ?? '')
+                setPage(0)
+              }}
+              placeholder="All categories"
+            />
             <label className="checkbox">
               <input
                 type="checkbox"
