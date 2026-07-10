@@ -90,10 +90,15 @@ export default function Dashboard() {
   }, [selected])
 
   // Fixed slot assignment over the whole window: color follows the category,
-  // never the current month's ranking.
+  // never the current month's ranking. Uncategorized (id 0) is not a real
+  // category — it always renders as its own neutral-gray series, never a
+  // colored slot and never folded into Other.
   const slots = useMemo(() => {
     const map = new Map<number, number>()
-    overview?.categories.slice(0, MAX_SLOTS).forEach((c, i) => map.set(c.id, i))
+    overview?.categories
+      .filter((c) => c.id !== 0)
+      .slice(0, MAX_SLOTS)
+      .forEach((c, i) => map.set(c.id, i))
     return map
   }, [overview])
 
@@ -111,6 +116,7 @@ export default function Dashboard() {
   const seriesName = (id: number) =>
     overview.categories.find((c) => c.id === id)?.name ?? 'Uncategorized'
   const slotFill = (categoryId: number) => {
+    if (categoryId === 0) return 'var(--series-uncat)'
     const slot = slots.get(categoryId)
     return SERIES_VARS[slot !== undefined ? slot : MAX_SLOTS]
   }
@@ -307,14 +313,21 @@ function StackedColumns({
   const barW = Math.min(24, band * 0.6)
   const y = (v: number) => PAD.top + plotH - (v / top) * plotH
 
-  // Legend order = slot order; Other last.
+  // Stack order: colored slots, then Other, then Uncategorized (neutral gray)
+  // always on top — it is missing data, not a category, so it never hides
+  // inside Other.
   const legendIds = [...slots.keys()]
   const stackFor = (m: MonthRow) => {
     const parts = legendIds.map((id) => ({ id, value: m.by_category[String(id)] ?? 0 }))
-    const other = m.spending - parts.reduce((s, p) => s + p.value, 0)
+    const uncat = m.by_category['0'] ?? 0
+    const other = m.spending - uncat - parts.reduce((s, p) => s + p.value, 0)
     if (other > 0.005) parts.push({ id: -1, value: other })
+    if (uncat > 0.005) parts.push({ id: 0, value: uncat })
     return parts.filter((p) => p.value > 0)
   }
+  const segFill = (id: number) =>
+    id === 0 ? 'var(--series-uncat)' : id === -1 ? SERIES_VARS[7] : SERIES_VARS[slots.get(id) ?? 7]
+  const segName = (id: number) => (id === 0 ? 'Uncategorized' : id === -1 ? 'Other' : seriesName(id))
 
   const hovered = hover ? months.find((m) => m.month === hover) : null
 
@@ -330,6 +343,10 @@ function StackedColumns({
         <span className="legend-item">
           <span className="swatch" style={{ background: SERIES_VARS[7] }} />
           Other
+        </span>
+        <span className="legend-item">
+          <span className="swatch" style={{ background: 'var(--series-uncat)' }} />
+          Uncategorized
         </span>
       </div>
       <div className="chart-wrap">
@@ -363,7 +380,7 @@ function StackedColumns({
                   const h = y(acc) - y1
                   acc += seg.value
                   const isTop = si === segs.length - 1
-                  const fill = seg.id === -1 ? SERIES_VARS[7] : SERIES_VARS[slots.get(seg.id) ?? 7]
+                  const fill = segFill(seg.id)
                   return (
                     <rect
                       key={seg.id}
@@ -397,12 +414,9 @@ function StackedColumns({
               .reverse()
               .map((seg) => (
                 <div key={seg.id} className="tt-row">
-                  <span
-                    className="tt-key"
-                    style={{ background: seg.id === -1 ? SERIES_VARS[7] : SERIES_VARS[slots.get(seg.id) ?? 7] }}
-                  />
+                  <span className="tt-key" style={{ background: segFill(seg.id) }} />
                   <span className="tt-value">{gbp(seg.value)}</span>
-                  <span className="tt-label">{seg.id === -1 ? 'Other' : seriesName(seg.id)}</span>
+                  <span className="tt-label">{segName(seg.id)}</span>
                 </div>
               ))}
             <div className="tt-row tt-total">
@@ -422,12 +436,14 @@ function StackedColumns({
               </th>
             ))}
             <th className="num">Other</th>
+            <th className="num">Uncategorized</th>
             <th className="num">Total</th>
           </tr>
         </thead>
         <tbody>
           {months.map((m) => {
             const known = legendIds.reduce((s, id) => s + (m.by_category[String(id)] ?? 0), 0)
+            const uncat = m.by_category['0'] ?? 0
             return (
               <tr key={m.month}>
                 <td>{monthLong(m.month)}</td>
@@ -436,7 +452,8 @@ function StackedColumns({
                     {gbp(m.by_category[String(id)] ?? 0)}
                   </td>
                 ))}
-                <td className="num">{gbp(Math.max(m.spending - known, 0))}</td>
+                <td className="num">{gbp(Math.max(m.spending - known - uncat, 0))}</td>
+                <td className="num">{gbp(uncat)}</td>
                 <td className="num">{gbp(m.spending)}</td>
               </tr>
             )

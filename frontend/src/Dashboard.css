@@ -16,6 +16,7 @@
   --series-6: #e34948;
   --series-7: #e87ba4;
   --series-8: #eb6834;
+  --series-uncat: #a8a69e; /* neutral gray: missing data, not a category */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -36,6 +37,7 @@
     --series-6: #e66767;
     --series-7: #d55181;
     --series-8: #d95926;
+    --series-uncat: #6f6e67;
   }
 }
 
