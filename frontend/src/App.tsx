@@ -113,6 +113,21 @@ export default function App() {
     await Promise.all([loadTxs(), loadReview()])
   }
 
+  async function syncSplitwise() {
+    setTransferMsg('Syncing Splitwise…')
+    const res = await fetch('/api/splitwise/sync', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) {
+      setTransferMsg(data.detail ?? 'Splitwise sync failed')
+      return
+    }
+    setTransferMsg(
+      `Splitwise: ${data.corrections} corrections imported (${data.uncategorized} to review), ` +
+        `${data.settlements_linked} settle-ups linked, ${data.settlements_pending} awaiting bank data`,
+    )
+    await Promise.all([loadStatic(), loadTxs(), loadReview()])
+  }
+
   const loadStatic = useCallback(async () => {
     const [acc, cats] = await Promise.all([
       fetch('/api/accounts').then((r) => r.json()),
@@ -323,6 +338,9 @@ export default function App() {
             </label>
             <button onClick={detectTransfers} title="Link transfers between your own accounts">
               ⇄ Detect transfers
+            </button>
+            <button onClick={syncSplitwise} title="Import shared-expense corrections from Splitwise">
+              ⚖ Sync Splitwise
             </button>
           </section>
           {transferMsg && <p className="review-intro">{transferMsg}</p>}

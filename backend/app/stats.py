@@ -28,6 +28,16 @@ GBP_RATES = {
 TRANSFER_CATEGORY = "Transfers"
 
 
+def _is_income(tx, income_id) -> bool:
+    """A positive amount counts as income when it's explicitly categorized as
+    Income, or uncategorized in a real bank account. Positive amounts with a
+    spending category — and anything in the Splitwise clearing account — are
+    refunds/corrections that offset spending instead."""
+    if tx.account.provider == "splitwise":
+        return False
+    return tx.category_id == income_id or tx.category_id is None
+
+
 def to_gbp(amount: Decimal, currency: str) -> Decimal:
     return Decimal(amount) * GBP_RATES.get(currency, Decimal("1"))
 
@@ -51,6 +61,7 @@ def _spending_transactions(db: Session) -> list[Transaction]:
 def monthly_overview(db: Session, months: int = 12) -> dict:
     txs = _spending_transactions(db)
     categories = {c.id: c.name for c in db.scalars(select(Category))}
+    income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
 
     by_month: dict[str, dict] = defaultdict(
         lambda: {"spending": Decimal(0), "income": Decimal(0), "by_category": defaultdict(Decimal)}
@@ -65,8 +76,15 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
             bucket["spending"] += -gbp
             bucket["by_category"][tx.category_id] += -gbp
             category_totals[tx.category_id] += -gbp
-        else:
+        elif _is_income(tx, income_id):
             bucket["income"] += gbp
+        else:
+            # Refund semantics: a categorized inflow (refund, reimbursement,
+            # Splitwise correction) offsets its category rather than counting
+            # as income.
+            bucket["spending"] -= gbp
+            bucket["by_category"][tx.category_id] -= gbp
+            category_totals[tx.category_id] -= gbp
 
     keys = sorted(by_month)[-months:]
     return {
@@ -98,17 +116,19 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
 
 
 def month_detail(db: Session, month: str) -> dict:
+    income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
     txs = [
         t
         for t in _spending_transactions(db)
-        if t.date.strftime("%Y-%m") == month and t.amount < 0
+        if t.date.strftime("%Y-%m") == month
+        and (t.amount < 0 or not _is_income(t, income_id))
     ]
     categories = {c.id: c.name for c in db.scalars(select(Category))}
 
     by_category: dict[int | None, Decimal] = defaultdict(Decimal)
     by_merchant: dict[str, dict] = defaultdict(lambda: {"total": Decimal(0), "count": 0})
     for tx in txs:
-        gbp = -to_gbp(tx.amount, tx.account.currency)
+        gbp = -to_gbp(tx.amount, tx.account.currency)  # refunds subtract
         by_category[tx.category_id] += gbp
         m = by_merchant[tx.merchant or tx.description]
         m["total"] += gbp

@@ -45,6 +45,23 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/splitwise/status")
+def splitwise_status():
+    from .secrets_env import get_secret
+
+    return {"configured": get_secret("SPLITWISE_API_KEY") is not None}
+
+
+@app.post("/api/splitwise/sync")
+def splitwise_sync(db: Session = Depends(get_db)):
+    from .splitwise import sync
+
+    try:
+        return sync(db)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 @app.get("/api/llm/status")
 def llm_status():
     from .secrets_env import get_secret
