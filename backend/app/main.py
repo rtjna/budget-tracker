@@ -45,6 +45,14 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/llm/status")
+def llm_status():
+    from .secrets_env import get_secret
+
+    # Reports only presence, never the value.
+    return {"configured": get_secret("ANTHROPIC_API_KEY") is not None}
+
+
 @app.post("/api/imports")
 async def create_import(file: UploadFile, db: Session = Depends(get_db)):
     data = await file.read()
