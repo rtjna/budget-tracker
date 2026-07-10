@@ -374,7 +374,10 @@ export default function App() {
               : `${reviewTotal} uncategorized transactions, grouped by merchant. ` +
                 'Assigning also creates a rule so future imports categorize themselves.'}
           </p>
-          <AddCategory onAdded={loadStatic} />
+          <div className="review-tools">
+            <AddCategory onAdded={loadStatic} />
+            <TrainModel onDone={() => Promise.all([loadTxs(), loadReview()])} />
+          </div>
           {review.map((g) => (
             <ReviewRow
               key={g.merchant}
@@ -413,6 +416,39 @@ function AddCategory({ onAdded }: { onAdded: () => void }) {
       <button onClick={add} disabled={!name.trim()}>
         + Add category
       </button>
+    </div>
+  )
+}
+
+function TrainModel({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState('')
+  async function trainNow() {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/model/train', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setResult(data.detail ?? 'Training failed')
+        return
+      }
+      const acc =
+        data.holdout_accuracy !== null ? `${(data.holdout_accuracy * 100).toFixed(1)}% holdout accuracy, ` : ''
+      setResult(
+        `Trained on ${data.trained_on} labels (${data.classes} categories): ${acc}` +
+          `${data.applied} auto-categorized, ${data.low_confidence} left for review`,
+      )
+      onDone()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="train-model">
+      <button onClick={trainNow} disabled={busy}>
+        {busy ? 'Training…' : '🧠 Train model & auto-categorize'}
+      </button>
+      {result && <span className="review-meta">{result}</span>}
     </div>
   )
 }

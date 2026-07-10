@@ -13,6 +13,7 @@ from . import models
 from .categorize import apply_rules, normalize_merchant, seed_categories
 from .db import Base, SessionLocal, engine, ensure_columns, get_db
 from .importing import UnrecognizedFileError, import_file
+from .ml import apply_model, train
 from .transfers import detect_transfers
 from .xlsx import is_xlsx, xlsx_to_csv_text
 
@@ -53,6 +54,8 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
     except UnrecognizedFileError as e:
         raise HTTPException(status_code=422, detail=str(e))
     transfers = detect_transfers(db)
+    model_result = apply_model(db)
+    db.commit()
     return {
         "source": batch.source,
         "filename": batch.filename,
@@ -61,6 +64,24 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
         "date_min": batch.date_min,
         "date_max": batch.date_max,
         "transfers": transfers,
+        "model_categorized": model_result["applied"],
+    }
+
+
+@app.post("/api/model/train")
+def train_model(db: Session = Depends(get_db)):
+    try:
+        result = train(db)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    applied = apply_model(db)
+    db.commit()
+    return {
+        "trained_on": result.trained_on,
+        "classes": result.classes,
+        "holdout_accuracy": result.holdout_accuracy,
+        "applied": applied["applied"],
+        "low_confidence": applied["low_confidence"],
     }
 
 

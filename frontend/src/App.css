@@ -211,3 +211,18 @@
   background: inherit;
   color: inherit;
 }
+
+.review-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.train-model {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
