@@ -120,12 +120,12 @@ export default function App() {
           uploadFiles(e.dataTransfer.files)
         }}
       >
-        <p>Drop bank CSV exports here, or</p>
+        <p>Drop bank exports here (CSV or Excel), or</p>
         <label className="filepick">
           choose files
           <input
             type="file"
-            accept=".csv"
+            accept=".csv,.xlsx"
             multiple
             hidden
             onChange={(e) => e.target.files && uploadFiles(e.target.files)}

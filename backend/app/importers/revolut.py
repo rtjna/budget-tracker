@@ -1,9 +1,20 @@
 import csv
 import io
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from .base import BankImporter, ParsedRow, normalize_whitespace
+
+DATE_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y")
+
+
+def parse_date(value: str) -> date:
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized Revolut date: {value!r}")
 
 HEADER = [
     "type",
@@ -51,7 +62,7 @@ class RevolutImporter(BankImporter):
             fee = Decimal((raw.get("fee") or "0").replace(",", "").strip() or "0")
             rows.append(
                 ParsedRow(
-                    date=datetime.strptime(completed, "%Y-%m-%d %H:%M:%S").date(),
+                    date=parse_date(completed),
                     description=normalize_whitespace(raw["description"]),
                     amount=amount - fee,
                 )

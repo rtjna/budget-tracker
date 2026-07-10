@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from . import models
 from .db import Base, engine, get_db
 from .importing import UnrecognizedFileError, import_file
+from .xlsx import is_xlsx, xlsx_to_csv_text
 
 Base.metadata.create_all(engine)
 
@@ -31,7 +32,11 @@ def health():
 
 @app.post("/api/imports")
 async def create_import(file: UploadFile, db: Session = Depends(get_db)):
-    text = (await file.read()).decode("utf-8-sig")
+    data = await file.read()
+    if is_xlsx(data):
+        text = xlsx_to_csv_text(data)
+    else:
+        text = data.decode("utf-8-sig")
     try:
         batch = import_file(db, file.filename or "upload.csv", text)
     except UnrecognizedFileError as e:
