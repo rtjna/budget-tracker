@@ -17,6 +17,9 @@ from .ml import apply_model, train
 from .transfers import detect_transfers
 from .xlsx import is_xlsx, xlsx_to_csv_text
 
+from .secrets_env import load_secrets
+
+load_secrets()
 Base.metadata.create_all(engine)
 ensure_columns()
 with SessionLocal() as _db:
