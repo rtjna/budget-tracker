@@ -1,0 +1,110 @@
+.app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  text-align: left;
+}
+
+.dropzone {
+  border: 2px dashed #8884;
+  border-radius: 12px;
+  padding: 1.5rem;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.dropzone.dragging {
+  border-color: #646cff;
+  background: #646cff11;
+}
+
+.dropzone p {
+  margin: 0 0 0.5rem;
+}
+
+.filepick {
+  color: #646cff;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.import-results p {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.import-results .error {
+  color: #d33;
+}
+
+.accounts {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.account-card {
+  border: 1px solid #8884;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.9rem;
+}
+
+.coverage {
+  opacity: 0.7;
+}
+
+.filters {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.filters input,
+.filters select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #8886;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background: inherit;
+  color: inherit;
+}
+
+.filters input {
+  flex: 1;
+}
+
+.tx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.tx-table th,
+.tx-table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #8883;
+  text-align: left;
+}
+
+.tx-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tx-table .in {
+  color: #2a9d4a;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}

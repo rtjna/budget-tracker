@@ -1,0 +1,63 @@
+from datetime import date, datetime, timezone
+
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .db import Base
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Account(Base):
+    __tablename__ = "accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    provider: Mapped[str] = mapped_column(String)  # amex | barclays | revolut | monzo
+    kind: Mapped[str] = mapped_column(String)  # current | credit | savings
+    currency: Mapped[str] = mapped_column(String, default="GBP")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
+
+
+class Category(Base):
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+
+    __table_args__ = (UniqueConstraint("name", "parent_id"),)
+
+
+class ImportBatch(Base):
+    __tablename__ = "import_batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String)  # importer name, e.g. "amex"
+    filename: Mapped[str] = mapped_column(String)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    new_count: Mapped[int] = mapped_column(Integer, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
+    date_min: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_max: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    description: Mapped[str] = mapped_column(String)
+    # Signed: negative = money out, positive = money in, on every account type.
+    amount: Mapped[float] = mapped_column(Numeric(12, 2))
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    account: Mapped[Account] = relationship(back_populates="transactions")
