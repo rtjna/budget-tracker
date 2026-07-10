@@ -68,6 +68,44 @@
   color: var(--text-muted);
 }
 
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--gridline);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.view-switch button {
+  border: none;
+  border-radius: 0;
+  padding: 0.3rem 0.9rem;
+  font-size: 0.8rem;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.view-switch button.active {
+  background: var(--gridline);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.bar-list.clickable .bar-row {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 0.1rem 0.25rem;
+}
+
+.bar-list.clickable .bar-row:hover {
+  background: var(--gridline);
+}
+
+.bar-row.bar-selected .bar-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

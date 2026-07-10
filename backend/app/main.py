@@ -138,6 +138,15 @@ def stats_month(month: str, db: Session = Depends(get_db)):
     return month_detail(db, month)
 
 
+@app.get("/api/stats/category/{category_id}/merchants")
+def stats_category_merchants(
+    category_id: int, db: Session = Depends(get_db), months: int = Query(default=12, le=60)
+):
+    from .stats import category_merchants
+
+    return category_merchants(db, category_id, months=months)
+
+
 @app.get("/api/stats/recurring")
 def stats_recurring(db: Session = Depends(get_db)):
     from .stats import recurring

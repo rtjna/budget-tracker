@@ -65,7 +65,9 @@ function niceTicks(max: number): number[] {
 
 export default function Dashboard() {
   const [overview, setOverview] = useState<Overview | null>(null)
+  const [view, setView] = useState<'time' | 'category'>('time')
   const [selected, setSelected] = useState('')
+  const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
   const [recurring, setRecurring] = useState<RecurringItem[]>([])
 
@@ -75,6 +77,7 @@ export default function Dashboard() {
       .then((data: Overview) => {
         setOverview(data)
         if (data.months.length) setSelected(data.months[data.months.length - 1].month)
+        if (data.categories.length) setSelectedCat(data.categories[0].id)
       })
     fetch('/api/stats/recurring')
       .then((r) => r.json())
@@ -121,9 +124,22 @@ export default function Dashboard() {
     return SERIES_VARS[slot !== undefined ? slot : MAX_SLOTS]
   }
 
+  if (view === 'category') {
+    return (
+      <CategoryView
+        overview={overview}
+        selectedCat={selectedCat ?? overview.categories[0].id}
+        setSelectedCat={setSelectedCat}
+        setView={setView}
+        slotFill={slotFill}
+      />
+    )
+  }
+
   return (
     <section className="dash viz-root">
       <div className="dash-filters">
+        <ViewSwitch view={view} setView={setView} />
         <label>
           Month{' '}
           <select value={selected} onChange={(e) => setSelected(e.target.value)}>
@@ -238,6 +254,225 @@ export default function Dashboard() {
         </table>
       </div>
     </section>
+  )
+}
+
+function ViewSwitch({
+  view,
+  setView,
+}: {
+  view: 'time' | 'category'
+  setView: (v: 'time' | 'category') => void
+}) {
+  return (
+    <span className="view-switch">
+      <button className={view === 'time' ? 'active' : ''} onClick={() => setView('time')}>
+        By month
+      </button>
+      <button className={view === 'category' ? 'active' : ''} onClick={() => setView('category')}>
+        By category
+      </button>
+    </span>
+  )
+}
+
+function CategoryView({
+  overview,
+  selectedCat,
+  setSelectedCat,
+  setView,
+  slotFill,
+}: {
+  overview: Overview
+  selectedCat: number
+  setSelectedCat: (id: number) => void
+  setView: (v: 'time' | 'category') => void
+  slotFill: (id: number) => string
+}) {
+  const [merchants, setMerchants] = useState<MonthDetail['merchants']>([])
+  useEffect(() => {
+    fetch(`/api/stats/category/${selectedCat}/merchants`)
+      .then((r) => r.json())
+      .then((d) => setMerchants(d.merchants))
+  }, [selectedCat])
+
+  const months = overview.months
+  const cat = overview.categories.find((c) => c.id === selectedCat) ?? overview.categories[0]
+  const series = months.map((m) => ({ month: m.month, value: m.by_category[String(cat.id)] ?? 0 }))
+  const monthlyAvg = cat.total / Math.max(months.length, 1)
+  const peak = series.reduce((a, b) => (b.value > a.value ? b : a), series[0])
+  const latest = series[series.length - 1]
+  const fill = slotFill(cat.id)
+
+  return (
+    <section className="dash viz-root">
+      <div className="dash-filters">
+        <ViewSwitch view="category" setView={setView} />
+        <label>
+          Category{' '}
+          <select value={cat.id} onChange={(e) => setSelectedCat(Number(e.target.value))}>
+            {overview.categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="dash-note">Last {months.length} months · approximate GBP · transfers excluded</span>
+      </div>
+
+      <div className="kpi-row">
+        <StatTile label={`${cat.name} — total`} value={gbp(cat.total)} />
+        <StatTile label="Monthly average" value={gbp(monthlyAvg)} />
+        <StatTile label="Highest month" value={gbp(peak.value)} sub={monthLong(peak.month)} />
+        <StatTile label={monthLong(latest.month)} value={gbp(latest.value)} sub="latest month" />
+      </div>
+
+      <div className="dash-split">
+        <ChartCard title="All categories, ranked by total spend">
+          <div className="bar-list clickable">
+            {overview.categories.map((c) => (
+              <div
+                key={c.id}
+                className={`bar-row ${c.id === cat.id ? 'bar-selected' : ''}`}
+                onClick={() => setSelectedCat(c.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && setSelectedCat(c.id)}
+              >
+                <span className="bar-name">{c.name}</span>
+                <span className="bar-track">
+                  <span
+                    className="bar-fill"
+                    style={{
+                      width: `${(c.total / overview.categories[0].total) * 100}%`,
+                      background: slotFill(c.id),
+                    }}
+                  />
+                </span>
+                <span className="bar-value">{gbp(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        </ChartCard>
+        <div className="chart-card">
+          <h3>Top merchants — {cat.name}</h3>
+          <table className="mini-table">
+            <tbody>
+              {merchants.slice(0, 12).map((m) => (
+                <tr key={m.merchant}>
+                  <td className="merchant-name">{m.merchant}</td>
+                  <td className="num muted">{m.count}×</td>
+                  <td className="num">{gbp(m.total, 2)}</td>
+                </tr>
+              ))}
+              {merchants.length === 0 && (
+                <tr>
+                  <td className="muted">No spending in this category in the window.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <ChartCard title={`${cat.name} by month`}>
+        <CategoryTrend series={series} fill={fill} name={cat.name} />
+      </ChartCard>
+    </section>
+  )
+}
+
+function CategoryTrend({
+  series,
+  fill,
+  name,
+}: {
+  series: { month: string; value: number }[]
+  fill: string
+  name: string
+}) {
+  const [hover, setHover] = useState<string | null>(null)
+  const maxV = Math.max(...series.map((s) => s.value), 1)
+  const ticks = niceTicks(maxV)
+  const top = ticks[ticks.length - 1]
+  const plotW = W - PAD.left - PAD.right
+  const plotH = H - PAD.top - PAD.bottom
+  const band = plotW / series.length
+  const barW = Math.min(24, band * 0.6)
+  const y = (v: number) => PAD.top + plotH - (v / top) * plotH
+  const hovered = hover ? series.find((s) => s.month === hover) : null
+
+  return (
+    <>
+      <div className="chart-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" role="img" aria-label={`${name} spending by month`}>
+          {ticks.map((t) => (
+            <g key={t}>
+              <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} className="gridline" />
+              <text x={PAD.left - 6} y={y(t) + 3} className="axis-text" textAnchor="end">
+                {t >= 1000 ? `${(t / 1000).toLocaleString()}k` : t.toLocaleString()}
+              </text>
+            </g>
+          ))}
+          {series.map((s, i) => {
+            const x = PAD.left + band * i + (band - barW) / 2
+            return (
+              <g
+                key={s.month}
+                tabIndex={0}
+                onPointerEnter={() => setHover(s.month)}
+                onPointerLeave={() => setHover(null)}
+                onFocus={() => setHover(s.month)}
+                onBlur={() => setHover(null)}
+              >
+                <rect x={PAD.left + band * i} y={PAD.top} width={band} height={plotH + PAD.bottom} fill="transparent" />
+                {s.value > 0 && (
+                  <rect
+                    x={x}
+                    y={y(s.value)}
+                    width={barW}
+                    height={Math.max(y(0) - y(s.value), 1)}
+                    rx={4}
+                    fill={fill}
+                    opacity={hover && hover !== s.month ? 0.45 : 1}
+                  />
+                )}
+                <text x={x + barW / 2} y={H - 8} textAnchor="middle" className="axis-text">
+                  {monthLabel(s.month)}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+        {hovered && (
+          <div className="viz-tooltip">
+            <strong>{monthLong(hovered.month)}</strong>
+            <div className="tt-row">
+              <span className="tt-key" style={{ background: fill }} />
+              <span className="tt-value">{gbp(hovered.value)}</span>
+              <span className="tt-label">{name}</span>
+            </div>
+          </div>
+        )}
+      </div>
+      <table className="mini-table chart-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th className="num">{name}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.map((s) => (
+            <tr key={s.month}>
+              <td>{monthLong(s.month)}</td>
+              <td className="num">{gbp(s.value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   )
 }
 

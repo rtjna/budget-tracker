@@ -137,6 +137,33 @@ def month_detail(db: Session, month: str) -> dict:
     }
 
 
+def category_merchants(db: Session, category_id: int, months: int = 12) -> dict:
+    """Top merchants within one category (id 0 = uncategorized) across the
+    last N months, GBP-converted, spending only."""
+    txs = [t for t in _spending_transactions(db) if t.amount < 0]
+    month_keys = sorted({t.date.strftime("%Y-%m") for t in txs})[-months:]
+    window = set(month_keys)
+    wanted = None if category_id == 0 else category_id
+
+    by_merchant: dict[str, dict] = defaultdict(lambda: {"total": Decimal(0), "count": 0})
+    for tx in txs:
+        if tx.category_id != wanted or tx.date.strftime("%Y-%m") not in window:
+            continue
+        m = by_merchant[tx.merchant or tx.description]
+        m["total"] += -to_gbp(tx.amount, tx.account.currency)
+        m["count"] += 1
+
+    return {
+        "merchants": sorted(
+            (
+                {"merchant": name, "total": float(v["total"]), "count": v["count"]}
+                for name, v in by_merchant.items()
+            ),
+            key=lambda x: -x["total"],
+        )[:15]
+    }
+
+
 CADENCES = [
     ("weekly", 5, 9),
     ("monthly", 24, 38),
