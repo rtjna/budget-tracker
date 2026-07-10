@@ -6,6 +6,7 @@ type Account = {
   name: string
   provider: string
   kind: string
+  currency: string
   transaction_count: number
   latest_transaction: string | null
 }
@@ -31,7 +32,16 @@ type ImportResult = {
 
 const PAGE_SIZE = 50
 
-const gbp = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' })
+const formatters = new Map<string, Intl.NumberFormat>()
+
+function money(amount: number, currency: string): string {
+  let fmt = formatters.get(currency)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat('en-GB', { style: 'currency', currency })
+    formatters.set(currency, fmt)
+  }
+  return fmt.format(amount)
+}
 
 function daysAgo(iso: string | null): string {
   if (!iso) return 'no data'
@@ -151,7 +161,9 @@ export default function App() {
           {accounts.map((a) => (
             <div key={a.id} className="account-card">
               <strong>{a.name}</strong>
-              <span>{a.transaction_count} transactions</span>
+              <span>
+                {a.transaction_count} transactions · {a.currency}
+              </span>
               <span className="coverage">latest: {daysAgo(a.latest_transaction)}</span>
             </div>
           ))}
@@ -196,7 +208,9 @@ export default function App() {
             <tr key={t.id}>
               <td>{t.date}</td>
               <td>{t.description}</td>
-              <td className={`num ${t.amount < 0 ? 'out' : 'in'}`}>{gbp.format(t.amount)}</td>
+              <td className={`num ${t.amount < 0 ? 'out' : 'in'}`}>
+                {money(t.amount, accounts.find((a) => a.id === t.account_id)?.currency ?? 'GBP')}
+              </td>
             </tr>
           ))}
         </tbody>

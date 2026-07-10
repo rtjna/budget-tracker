@@ -68,6 +68,7 @@ def list_accounts(db: Session = Depends(get_db)):
             "name": account.name,
             "provider": account.provider,
             "kind": account.kind,
+            "currency": account.currency,
             "transaction_count": count,
             "latest_transaction": latest,
         }

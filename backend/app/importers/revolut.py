@@ -60,11 +60,16 @@ class RevolutImporter(BankImporter):
                 continue
             amount = Decimal(raw["amount"].replace(",", "").strip())
             fee = Decimal((raw.get("fee") or "0").replace(",", "").strip() or "0")
+            currency = (raw.get("currency") or "GBP").strip().upper()
             rows.append(
                 ParsedRow(
                     date=parse_date(completed),
                     description=normalize_whitespace(raw["description"]),
                     amount=amount - fee,
+                    currency=currency,
+                    # Non-GBP currency pockets become their own accounts so
+                    # native amounts are never summed as if they were GBP.
+                    account=None if currency == "GBP" else f"Revolut {currency}",
                 )
             )
         return rows

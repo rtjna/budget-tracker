@@ -94,3 +94,21 @@ def test_unrecognized_file_rejected():
     db = make_session()
     with pytest.raises(UnrecognizedFileError):
         import_file(db, "junk.csv", "foo,bar\n1,2\n")
+
+
+REVOLUT_MULTICURRENCY_CSV = """Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance
+CARD_PAYMENT,Current,2026-07-05 09:00:00,2026-07-05 09:00:00,Boots,-5.00,0.00,GBP,COMPLETED,100.00
+CARD_PAYMENT,Current,2026-07-04 09:00:00,2026-07-04 09:00:00,Ramen Shop,-3000,0.00,JPY,COMPLETED,10000
+EXCHANGE,Current,2026-07-03 09:00:00,2026-07-03 09:00:00,Exchanged to JPY,-20.00,0.00,GBP,COMPLETED,105.00
+"""
+
+
+def test_revolut_multicurrency_splits_accounts():
+    db = make_session()
+    batch = import_file(db, "r.csv", REVOLUT_MULTICURRENCY_CSV)
+    assert batch.new_count == 3
+    by_account = {
+        t.account.name: (t.account.currency, t.amount) for t in db.scalars(select(Transaction))
+    }
+    assert by_account["Revolut"][0] == "GBP"
+    assert by_account["Revolut JPY"] == ("JPY", Decimal("-3000"))

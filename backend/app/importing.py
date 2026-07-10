@@ -20,13 +20,14 @@ def fingerprint(account_id: int, row: ParsedRow, ordinal: int) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-def get_or_create_account(db: Session, importer) -> Account:
-    account = db.scalar(select(Account).where(Account.name == importer.default_account_name))
+def get_or_create_account(db: Session, importer, name: str, currency: str) -> Account:
+    account = db.scalar(select(Account).where(Account.name == name))
     if account is None:
         account = Account(
-            name=importer.default_account_name,
+            name=name,
             provider=importer.provider,
             kind=importer.account_kind,
+            currency=currency,
         )
         db.add(account)
         db.flush()
@@ -44,24 +45,31 @@ def import_file(db: Session, filename: str, text: str) -> ImportBatch:
         raise UnrecognizedFileError(f"No importer recognizes the format of {filename!r}")
 
     rows = importer.parse(text)
-    account = get_or_create_account(db, importer)
 
-    # Identical rows (same date/description/amount) are legitimate — e.g. two
-    # identical coffees in one day — so each occurrence gets an ordinal, making
-    # fingerprints stable across overlapping export files.
+    accounts: dict[str, Account] = {}
+    for row in rows:
+        name = row.account or importer.default_account_name
+        if name not in accounts:
+            accounts[name] = get_or_create_account(db, importer, name, row.currency)
+
+    # Identical rows (same account/date/description/amount) are legitimate —
+    # e.g. two identical coffees in one day — so each occurrence gets an
+    # ordinal, making fingerprints stable across overlapping export files.
     groups: dict[tuple, list[ParsedRow]] = defaultdict(list)
     for row in rows:
-        groups[(row.date, row.description.lower(), row.amount)].append(row)
+        name = row.account or importer.default_account_name
+        groups[(name, row.date, row.description.lower(), row.amount)].append(row)
 
-    candidates: list[tuple[str, ParsedRow]] = []
-    for group in groups.values():
+    candidates: list[tuple[str, int, ParsedRow]] = []
+    for (name, *_), group in groups.items():
+        account_id = accounts[name].id
         for ordinal, row in enumerate(group):
-            candidates.append((fingerprint(account.id, row, ordinal), row))
+            candidates.append((fingerprint(account_id, row, ordinal), account_id, row))
 
     existing = set(
         db.scalars(
             select(Transaction.fingerprint).where(
-                Transaction.fingerprint.in_([fp for fp, _ in candidates])
+                Transaction.fingerprint.in_([fp for fp, _, _ in candidates])
             )
         )
     )
@@ -77,13 +85,13 @@ def import_file(db: Session, filename: str, text: str) -> ImportBatch:
     db.add(batch)
     db.flush()
 
-    for fp, row in candidates:
+    for fp, account_id, row in candidates:
         if fp in existing:
             batch.duplicate_count += 1
             continue
         db.add(
             Transaction(
-                account_id=account.id,
+                account_id=account_id,
                 date=row.date,
                 description=row.description,
                 amount=row.amount,

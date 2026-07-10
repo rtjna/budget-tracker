@@ -10,6 +10,8 @@ class ParsedRow:
     date: date
     description: str
     amount: Decimal  # signed: negative = money out, positive = money in
+    currency: str = "GBP"
+    account: str | None = None  # None = importer's default account
 
 
 def normalize_whitespace(text: str) -> str:
