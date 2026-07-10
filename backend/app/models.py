@@ -72,6 +72,19 @@ class Transaction(Base):
     account: Mapped[Account] = relationship(back_populates="transactions")
 
 
+class LlmMerchantCache(Base):
+    """One row per merchant ever sent to the LLM, so each merchant is asked
+    at most once. category_id NULL means the LLM was unsure — the merchant
+    stays in the review queue and is not re-asked."""
+
+    __tablename__ = "llm_merchant_cache"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    merchant: Mapped[str] = mapped_column(String, unique=True, index=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Rule(Base):
     __tablename__ = "rules"
 

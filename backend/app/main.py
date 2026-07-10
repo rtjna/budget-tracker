@@ -53,6 +53,16 @@ def llm_status():
     return {"configured": get_secret("ANTHROPIC_API_KEY") is not None}
 
 
+@app.post("/api/llm/categorize")
+def llm_categorize(db: Session = Depends(get_db), max_merchants: int = Query(default=200, le=1000)):
+    from .llm import categorize_merchants
+
+    try:
+        return categorize_merchants(db, max_merchants=max_merchants)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 @app.post("/api/imports")
 async def create_import(file: UploadFile, db: Session = Depends(get_db)):
     data = await file.read()

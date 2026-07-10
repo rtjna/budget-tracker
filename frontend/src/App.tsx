@@ -377,6 +377,7 @@ export default function App() {
           <div className="review-tools">
             <AddCategory onAdded={loadStatic} />
             <TrainModel onDone={() => Promise.all([loadTxs(), loadReview()])} />
+            <AskClaude onDone={() => Promise.all([loadTxs(), loadReview()])} />
           </div>
           {review.map((g) => (
             <ReviewRow
@@ -447,6 +448,38 @@ function TrainModel({ onDone }: { onDone: () => void }) {
     <div className="train-model">
       <button onClick={trainNow} disabled={busy}>
         {busy ? 'Training…' : '🧠 Train model & auto-categorize'}
+      </button>
+      {result && <span className="review-meta">{result}</span>}
+    </div>
+  )
+}
+
+function AskClaude({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState('')
+  async function run() {
+    setBusy(true)
+    setResult('Asking Claude — this can take a few minutes…')
+    try {
+      const res = await fetch('/api/llm/categorize', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setResult(data.detail ?? 'LLM categorization failed')
+        return
+      }
+      setResult(
+        `Claude reviewed ${data.asked} merchants: ${data.categorized} categorized ` +
+          `(${data.transactions} transactions), ${data.unsure} left for you`,
+      )
+      onDone()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="train-model">
+      <button onClick={run} disabled={busy}>
+        {busy ? 'Asking Claude…' : '✨ Ask Claude'}
       </button>
       {result && <span className="review-meta">{result}</span>}
     </div>
