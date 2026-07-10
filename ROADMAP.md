@@ -10,7 +10,7 @@ categorization engine that learns from your corrections.
 | Platform | Self-hosted web app; develop on Mac, Dockerized from day one |
 | Stack | Python (FastAPI) backend + React SPA frontend |
 | Database | SQLite (single user; trivially portable and backed up as one file) |
-| Bank data | Monzo personal API (free, automatic) + CSV import with per-bank parsers for Barclays, Amex, and Revolut. No self-serve UK aggregator exists for individuals in 2026: GoCardless closed to new signups July 2025, Enable Banking is EEA-only, Plaid's free tier is US/CA-only, TrueLayer/Yapily/Salt Edge are sales-gated. Design the sync layer as pluggable so an aggregator can slot in if one appears. |
+| Bank data | CSV import with per-bank parsers (Barclays, Amex, Revolut) is the primary pipeline; Monzo personal API optional (Monzo is only used as an aggregation view today — and connected-account data cannot be exported from Monzo by API, Sheets, or CSV). No self-serve UK aggregator exists for individuals in 2026: GoCardless closed to new signups July 2025, Enable Banking is EEA-only, Plaid's free tier is US/CA-only, TrueLayer/Yapily/Salt Edge are sales-gated. Sync layer stays pluggable in case one appears. |
 | Categorization | Hybrid: deterministic rules → local ML → Claude API fallback for low-confidence |
 | LLM privacy | Only merchant/description strings sent to Claude — never balances or account IDs |
 | Budget style | Tracking & insights first; budgets are a later phase |
@@ -21,17 +21,17 @@ categorization engine that learns from your corrections.
 
 These need you personally (accounts in your name):
 
-1. **Monzo developer access**: sign in at developers.monzo.com with your Monzo
-   account and create an OAuth client (confidential). Note the client ID/secret.
-   Quirk to know: under SCA rules the API returns **all** transaction history
-   only within ~5 minutes of authorising in the Monzo app; after that, only the
-   last 90 days. The app will pull full history immediately on first connect.
-   The API exposes Monzo accounts/pots only — **not** connected accounts.
-2. **CSV exports** for the others (no personal APIs exist):
+1. **CSV exports** from each bank — the primary data pipeline (no personal
+   APIs exist, and connected-account data cannot be exported out of Monzo):
    - **Barclays**: online banking → statements → CSV/OFX export.
    - **Amex**: online account → statements → CSV (includes Amex's own categories).
    - **Revolut**: app → statement → CSV.
-3. **Anthropic API key** for the LLM fallback (Phase 4).
+   Grab the longest history each offers upfront for ML training data and trends.
+2. **Anthropic API key** for the LLM fallback (Phase 4).
+3. *(Optional, later)* **Monzo developer access** at developers.monzo.com if
+   meaningful money moves through the Monzo account itself. Quirk: under SCA
+   rules the API returns full history only within ~5 minutes of authorising;
+   after that, only the last 90 days. Exposes native Monzo accounts/pots only.
 4. The Enable Banking account created earlier is unused (EEA-only, no UK
    coverage) — safe to delete.
 
@@ -41,7 +41,7 @@ These need you personally (accounts in your name):
 
 - Git repo, FastAPI backend, React (Vite) frontend, SQLite via SQLAlchemy + Alembic migrations.
 - `docker-compose.yml` from the start so moving to an always-on box later is a copy job.
-- Config/secrets via `.env` (Monzo client ID/secret, Anthropic key).
+- Config/secrets via `.env` (Anthropic key; Monzo credentials if/when added).
 
 **Done when:** `docker compose up` serves a hello-world dashboard at localhost.
 
@@ -50,20 +50,20 @@ These need you personally (accounts in your name):
 The core value: transactions flow in automatically.
 
 - Schema: `accounts`, `transactions`, `categories` (user-defined tree), `transaction_splits`, `tags`, `merchants` (normalized), `sync_log`.
-- Pluggable sync layer: a `BankSource` interface so each provider (Monzo API,
-  CSV parsers, any future aggregator) is an interchangeable plugin.
-- Monzo integration:
-  - OAuth flow against the personal API; webhook for real-time transactions later.
-  - Full history pulled in the 5-minute post-authorization window; incremental sync thereafter.
-- CSV import pipeline:
-  - Drag-and-drop upload with per-bank parsers (Barclays, Amex, Revolut) auto-detected from the file shape.
+- Pluggable sync layer: a `BankSource` interface so each provider (CSV parsers,
+  Monzo API, any future aggregator) is an interchangeable plugin.
+- CSV import pipeline — the primary path, so the UX gets the investment:
+  - Drag-and-drop upload of multiple files at once; per-bank parsers (Barclays, Amex, Revolut) auto-detected from the file shape.
+  - Import preview + summary (n new, n duplicates skipped, date range covered).
+  - "Coverage" indicator per account: how recent the newest imported transaction is, nudging when an account is stale.
   - Amex's own category column captured as a categorization hint.
 - Idempotent dedup across all sources (pending→booked changes, overlapping CSV exports; match on amount/date/reference).
-- Manual sync button first; scheduled background sync for Monzo (APScheduler) once stable.
+- *(Optional)* Monzo integration: OAuth flow against the personal API; full history
+  pulled in the 5-minute post-authorization window; incremental sync + webhook thereafter.
 - Basic transaction list UI: filter, search, sort.
 
-**Done when:** Monzo syncs automatically and a month of Barclays/Amex/Revolut
-CSVs imports cleanly into one deduplicated transaction list.
+**Done when:** dropping a month of Barclays/Amex/Revolut exports into the app
+takes under a minute and lands in one clean, deduplicated transaction list.
 
 ## Phase 2 — Categories, rules & the review workflow
 
@@ -122,8 +122,8 @@ By now there are months of clean data to set realistic limits against.
 
 | Session | Target |
 |---|---|
-| 1 | Phase 0 + schema + Monzo OAuth connection |
-| 2 | Monzo sync + CSV importers (Barclays, Amex, Revolut), dedup, transaction list UI |
+| 1 | Phase 0 + schema + first CSV importer working end-to-end (start with your real exports) |
+| 2 | Remaining importers (Barclays, Amex, Revolut), dedup, import UX, transaction list UI |
 | 3 | Categories, rules engine, review queue |
 | 4 | Transfer/CC matching + first dashboards |
 | 5 | ML layer + Claude fallback |
