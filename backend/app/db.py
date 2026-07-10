@@ -35,6 +35,7 @@ def ensure_columns() -> None:
         "transactions": {
             "merchant": "VARCHAR",
             "category_source": "VARCHAR",
+            "transfer_peer_id": "INTEGER REFERENCES transactions(id)",
         }
     }
     with engine.begin() as conn:

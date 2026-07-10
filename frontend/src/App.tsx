@@ -22,6 +22,7 @@ type Tx = {
   amount: number
   category_id: number | null
   category_source: string | null
+  transfer_peer_id: number | null
 }
 
 type ReviewGroup = {
@@ -102,6 +103,13 @@ export default function App() {
   const [reviewTotal, setReviewTotal] = useState(0)
   const [imports, setImports] = useState<ImportResult[]>([])
   const [dragging, setDragging] = useState(false)
+  const [transferMsg, setTransferMsg] = useState('')
+
+  async function detectTransfers() {
+    const res = await (await fetch('/api/transfers/detect', { method: 'POST' })).json()
+    setTransferMsg(`${res.pairs} new transfer pair${res.pairs === 1 ? '' : 's'} linked`)
+    await Promise.all([loadTxs(), loadReview()])
+  }
 
   const loadStatic = useCallback(async () => {
     const [acc, cats] = await Promise.all([
@@ -296,7 +304,11 @@ export default function App() {
               />
               uncategorized
             </label>
+            <button onClick={detectTransfers} title="Link transfers between your own accounts">
+              ⇄ Detect transfers
+            </button>
           </section>
+          {transferMsg && <p className="review-intro">{transferMsg}</p>}
 
           <table className="tx-table">
             <thead>
@@ -311,7 +323,14 @@ export default function App() {
               {txs.map((t) => (
                 <tr key={t.id}>
                   <td>{t.date}</td>
-                  <td>{t.description}</td>
+                  <td>
+                    {t.description}
+                    {t.transfer_peer_id !== null && (
+                      <span className="source-badge" title="Linked transfer between your accounts">
+                        ⇄ transfer
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <span className="cat-cell">
                       <CategorySelect
@@ -355,6 +374,7 @@ export default function App() {
               : `${reviewTotal} uncategorized transactions, grouped by merchant. ` +
                 'Assigning also creates a rule so future imports categorize themselves.'}
           </p>
+          <AddCategory onAdded={loadStatic} />
           {review.map((g) => (
             <ReviewRow
               key={g.merchant}
@@ -366,6 +386,34 @@ export default function App() {
         </section>
       )}
     </main>
+  )
+}
+
+function AddCategory({ onAdded }: { onAdded: () => void }) {
+  const [name, setName] = useState('')
+  async function add() {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    await fetch('/api/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: trimmed }),
+    })
+    setName('')
+    onAdded()
+  }
+  return (
+    <div className="add-category">
+      <input
+        placeholder="New category…"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && add()}
+      />
+      <button onClick={add} disabled={!name.trim()}>
+        + Add category
+      </button>
+    </div>
   )
 }
 

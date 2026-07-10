@@ -61,6 +61,11 @@ class Transaction(Base):
     # Provenance of the categorization: human | rule | model | llm.
     category_source: Mapped[str | None] = mapped_column(String, nullable=True)
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
+    # The opposite leg when this transaction is a transfer between own
+    # accounts (set on both legs); transfers are excluded from spending.
+    transfer_peer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id"), nullable=True, index=True
+    )
     fingerprint: Mapped[str] = mapped_column(String, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

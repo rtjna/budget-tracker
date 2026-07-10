@@ -197,3 +197,17 @@
   background: inherit;
   color: inherit;
 }
+
+.add-category {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.add-category input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #8886;
+  border-radius: 6px;
+  background: inherit;
+  color: inherit;
+}

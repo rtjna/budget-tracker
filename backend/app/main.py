@@ -13,6 +13,7 @@ from . import models
 from .categorize import apply_rules, normalize_merchant, seed_categories
 from .db import Base, SessionLocal, engine, ensure_columns, get_db
 from .importing import UnrecognizedFileError, import_file
+from .transfers import detect_transfers
 from .xlsx import is_xlsx, xlsx_to_csv_text
 
 Base.metadata.create_all(engine)
@@ -51,6 +52,7 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
         batch = import_file(db, file.filename or "upload.csv", text)
     except UnrecognizedFileError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    transfers = detect_transfers(db)
     return {
         "source": batch.source,
         "filename": batch.filename,
@@ -58,7 +60,26 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
         "duplicates": batch.duplicate_count,
         "date_min": batch.date_min,
         "date_max": batch.date_max,
+        "transfers": transfers,
     }
+
+
+@app.post("/api/transfers/detect")
+def run_transfer_detection(db: Session = Depends(get_db)):
+    return {"pairs": detect_transfers(db)}
+
+
+@app.post("/api/transfers/unlink/{tx_id}")
+def unlink_transfer(tx_id: int, db: Session = Depends(get_db)):
+    tx = db.get(models.Transaction, tx_id)
+    if tx is None or tx.transfer_peer_id is None:
+        raise HTTPException(status_code=404, detail="No transfer link on this transaction")
+    peer = db.get(models.Transaction, tx.transfer_peer_id)
+    tx.transfer_peer_id = None
+    if peer is not None:
+        peer.transfer_peer_id = None
+    db.commit()
+    return {"unlinked": tx_id}
 
 
 @app.get("/api/accounts")
@@ -127,6 +148,7 @@ def list_transactions(
                 "amount": float(t.amount),
                 "category_id": t.category_id,
                 "category_source": t.category_source,
+                "transfer_peer_id": t.transfer_peer_id,
             }
             for t in txs
         ],
@@ -239,7 +261,10 @@ def review_queue(db: Session = Depends(get_db), limit: int = Query(default=50, l
             func.max(models.Transaction.description),
             func.max(models.Transaction.date),
         )
-        .where(models.Transaction.category_id.is_(None))
+        .where(
+            models.Transaction.category_id.is_(None),
+            models.Transaction.transfer_peer_id.is_(None),
+        )
         .group_by(models.Transaction.merchant)
         .order_by(func.count(models.Transaction.id).desc())
         .limit(limit)
@@ -247,7 +272,10 @@ def review_queue(db: Session = Depends(get_db), limit: int = Query(default=50, l
     total = db.scalar(
         select(func.count())
         .select_from(models.Transaction)
-        .where(models.Transaction.category_id.is_(None))
+        .where(
+            models.Transaction.category_id.is_(None),
+            models.Transaction.transfer_peer_id.is_(None),
+        )
     )
     return {
         "total_uncategorized": total,
@@ -276,6 +304,7 @@ def review_assign(body: AssignBody, db: Session = Depends(get_db)):
             select(models.Transaction).where(
                 models.Transaction.merchant == body.merchant,
                 models.Transaction.category_id.is_(None),
+                models.Transaction.transfer_peer_id.is_(None),
             )
         )
     )
