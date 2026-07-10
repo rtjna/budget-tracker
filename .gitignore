@@ -14,11 +14,16 @@ venv/
 node_modules/
 dist/
 
-# Local data
+# Local data — bank exports and databases must never reach the public repo
+*.csv
+*.ofx
+*.qif
+*.xlsx
 *.sqlite
 *.sqlite3
 *.db
 backups/
+data/
 
 # OS / editor
 .DS_Store
