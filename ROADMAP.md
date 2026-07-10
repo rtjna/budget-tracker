@@ -10,7 +10,7 @@ categorization engine that learns from your corrections.
 | Platform | Self-hosted web app; develop on Mac, Dockerized from day one |
 | Stack | Python (FastAPI) backend + React SPA frontend |
 | Database | SQLite (single user; trivially portable and backed up as one file) |
-| Bank data | Enable Banking, free "restricted production" mode (own accounts, non-commercial), pull max history each bank offers. (GoCardless Bank Account Data was the original pick but closed to new signups in July 2025.) |
+| Bank data | Monzo personal API (free, automatic) + CSV import with per-bank parsers for Barclays, Amex, and Revolut. No self-serve UK aggregator exists for individuals in 2026: GoCardless closed to new signups July 2025, Enable Banking is EEA-only, Plaid's free tier is US/CA-only, TrueLayer/Yapily/Salt Edge are sales-gated. Design the sync layer as pluggable so an aggregator can slot in if one appears. |
 | Categorization | Hybrid: deterministic rules → local ML → Claude API fallback for low-confidence |
 | LLM privacy | Only merchant/description strings sent to Claude — never balances or account IDs |
 | Budget style | Tracking & insights first; budgets are a later phase |
@@ -21,15 +21,19 @@ categorization engine that learns from your corrections.
 
 These need you personally (accounts in your name):
 
-1. **Enable Banking**: request an account at enablebanking.com ("Get Started").
-   In the control panel, create an application in **restricted production** mode
-   and link your own bank accounts to it — only accounts you link are returned
-   by the API, which is exactly what we need. Download the application's
-   private key (used to sign API requests). Check your specific banks appear
-   in their UK institution list.
-2. **Anthropic API key** for the LLM fallback (Phase 4).
-3. Know that bank connections **expire every 90 days** (UK Open Banking rule) —
-   the app will surface reauthorization prompts, but the re-consent click is yours.
+1. **Monzo developer access**: sign in at developers.monzo.com with your Monzo
+   account and create an OAuth client (confidential). Note the client ID/secret.
+   Quirk to know: under SCA rules the API returns **all** transaction history
+   only within ~5 minutes of authorising in the Monzo app; after that, only the
+   last 90 days. The app will pull full history immediately on first connect.
+   The API exposes Monzo accounts/pots only — **not** connected accounts.
+2. **CSV exports** for the others (no personal APIs exist):
+   - **Barclays**: online banking → statements → CSV/OFX export.
+   - **Amex**: online account → statements → CSV (includes Amex's own categories).
+   - **Revolut**: app → statement → CSV.
+3. **Anthropic API key** for the LLM fallback (Phase 4).
+4. The Enable Banking account created earlier is unused (EEA-only, no UK
+   coverage) — safe to delete.
 
 ---
 
@@ -37,7 +41,7 @@ These need you personally (accounts in your name):
 
 - Git repo, FastAPI backend, React (Vite) frontend, SQLite via SQLAlchemy + Alembic migrations.
 - `docker-compose.yml` from the start so moving to an always-on box later is a copy job.
-- Config/secrets via `.env` (Enable Banking app ID + private key path, Anthropic key).
+- Config/secrets via `.env` (Monzo client ID/secret, Anthropic key).
 
 **Done when:** `docker compose up` serves a hello-world dashboard at localhost.
 
@@ -46,16 +50,20 @@ These need you personally (accounts in your name):
 The core value: transactions flow in automatically.
 
 - Schema: `accounts`, `transactions`, `categories` (user-defined tree), `transaction_splits`, `tags`, `merchants` (normalized), `sync_log`.
-- Enable Banking integration:
-  - JWT auth signed with the application's private key.
-  - Bank consent (authorization session) flow — connect a bank from the UI, redirected consent, accounts linked.
-  - Transaction sync: pull maximum available history on first connect, incremental thereafter.
-  - Idempotent dedup (banks re-send pending→booked transactions with changed IDs; match on amount/date/reference).
-  - 90-day consent expiry tracking with in-app "reconnect" prompts.
-- Manual sync button first; scheduled background sync (APScheduler) once stable.
+- Pluggable sync layer: a `BankSource` interface so each provider (Monzo API,
+  CSV parsers, any future aggregator) is an interchangeable plugin.
+- Monzo integration:
+  - OAuth flow against the personal API; webhook for real-time transactions later.
+  - Full history pulled in the 5-minute post-authorization window; incremental sync thereafter.
+- CSV import pipeline:
+  - Drag-and-drop upload with per-bank parsers (Barclays, Amex, Revolut) auto-detected from the file shape.
+  - Amex's own category column captured as a categorization hint.
+- Idempotent dedup across all sources (pending→booked changes, overlapping CSV exports; match on amount/date/reference).
+- Manual sync button first; scheduled background sync for Monzo (APScheduler) once stable.
 - Basic transaction list UI: filter, search, sort.
 
-**Done when:** all your accounts sync into one deduplicated transaction list.
+**Done when:** Monzo syncs automatically and a month of Barclays/Amex/Revolut
+CSVs imports cleanly into one deduplicated transaction list.
 
 ## Phase 2 — Categories, rules & the review workflow
 
@@ -114,8 +122,8 @@ By now there are months of clean data to set realistic limits against.
 
 | Session | Target |
 |---|---|
-| 1 | Phase 0 + schema + Enable Banking sandbox connection |
-| 2 | Live bank sync, dedup, transaction list UI |
+| 1 | Phase 0 + schema + Monzo OAuth connection |
+| 2 | Monzo sync + CSV importers (Barclays, Amex, Revolut), dedup, transaction list UI |
 | 3 | Categories, rules engine, review queue |
 | 4 | Transfer/CC matching + first dashboards |
 | 5 | ML layer + Claude fallback |

@@ -9,9 +9,8 @@ for their own use. It has no other users.
 ## What data is processed
 
 The application retrieves account information (account details, balances, and
-transactions) via the Enable Banking API, exclusively from bank accounts owned
-by the operator, with the operator's explicit consent given through their
-bank's Open Banking authorization flow.
+transactions) via bank APIs and statement files, exclusively from bank accounts
+owned by the operator, with the operator's explicit consent.
 
 ## How data is used and stored
 
