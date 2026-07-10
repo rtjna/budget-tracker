@@ -124,6 +124,27 @@ def unlink_transfer(tx_id: int, db: Session = Depends(get_db)):
     return {"unlinked": tx_id}
 
 
+@app.get("/api/stats/overview")
+def stats_overview(db: Session = Depends(get_db), months: int = Query(default=12, le=60)):
+    from .stats import monthly_overview
+
+    return monthly_overview(db, months=months)
+
+
+@app.get("/api/stats/month/{month}")
+def stats_month(month: str, db: Session = Depends(get_db)):
+    from .stats import month_detail
+
+    return month_detail(db, month)
+
+
+@app.get("/api/stats/recurring")
+def stats_recurring(db: Session = Depends(get_db)):
+    from .stats import recurring
+
+    return {"items": recurring(db)}
+
+
 @app.get("/api/accounts")
 def list_accounts(db: Session = Depends(get_db)):
     rows = db.execute(

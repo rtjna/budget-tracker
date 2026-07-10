@@ -1,0 +1,328 @@
+/* Data-viz roles — reference palette (light), dark steps via media query. */
+.viz-root {
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --delta-good: #006300;
+  --delta-bad: #d03b3b;
+  --series-1: #2a78d6;
+  --series-2: #1baf7a;
+  --series-3: #eda100;
+  --series-4: #008300;
+  --series-5: #4a3aa7;
+  --series-6: #e34948;
+  --series-7: #e87ba4;
+  --series-8: #eb6834;
+}
+
+@media (prefers-color-scheme: dark) {
+  .viz-root {
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --delta-good: #0ca30c;
+    --delta-bad: #e66767;
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    --series-3: #c98500;
+    --series-4: #008300;
+    --series-5: #9085e9;
+    --series-6: #e66767;
+    --series-7: #d55181;
+    --series-8: #d95926;
+  }
+}
+
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.dash-filters {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.dash-filters select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--baseline);
+  border-radius: 6px;
+  background: inherit;
+  color: inherit;
+  font: inherit;
+}
+
+.dash-note {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.stat-tile {
+  background: var(--surface-1);
+  border: 1px solid var(--gridline);
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.stat-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.stat-value {
+  font-size: 1.65rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-delta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.stat-delta.good { color: var(--delta-good); }
+.stat-delta.bad { color: var(--delta-bad); }
+.stat-delta.muted { color: var(--text-muted); }
+
+.chart-card {
+  background: var(--surface-1);
+  border: 1px solid var(--gridline);
+  border-radius: 10px;
+  padding: 0.9rem 1rem 0.6rem;
+}
+
+.chart-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.table-toggle {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--gridline);
+  border-radius: 999px;
+  background: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chart-card-body[data-view='chart'] .chart-table { display: none; }
+.chart-card-body[data-view='table'] .chart-wrap,
+.chart-card-body[data-view='table'] .legend { display: none; }
+
+.legend {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.chart-wrap {
+  position: relative;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.gridline {
+  stroke: var(--gridline);
+  stroke-width: 1;
+}
+
+.axis-text {
+  font-size: 10.5px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.axis-selected {
+  fill: var(--text-primary);
+  font-weight: 600;
+}
+
+.viz-tooltip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--gridline);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+  min-width: 12rem;
+}
+
+.viz-tooltip strong {
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.tt-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  line-height: 1.5;
+}
+
+.tt-key {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.tt-value {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.2rem;
+  text-align: right;
+}
+
+.tt-label { color: var(--text-secondary); }
+
+.tt-total {
+  border-top: 1px solid var(--gridline);
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+}
+
+.tt-total .tt-value { margin-left: 14px; }
+
+.dash-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 760px) {
+  .dash-split { grid-template-columns: 1fr; }
+}
+
+.bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 4.5rem;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+
+.bar-name {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track { display: block; }
+
+.bar-fill {
+  display: block;
+  height: 14px;
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+
+.bar-value {
+  text-align: right;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.mini-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--gridline);
+}
+
+.mini-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--gridline);
+  color: var(--text-secondary);
+}
+
+.mini-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.mini-table th.num { color: var(--text-muted); }
+
+.merchant-name {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18rem;
+}
+
+.muted { color: var(--text-muted); }
+
+.subs-table .lapsed td { opacity: 0.55; }
+
+.price-up { color: var(--delta-bad); font-size: 0.72rem; }
+.price-down { color: var(--delta-good); font-size: 0.72rem; }
+
+.chart-table { margin-top: 0.25rem; overflow-x: auto; display: block; }
