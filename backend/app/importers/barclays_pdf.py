@@ -85,6 +85,11 @@ def parse_pdf(data: bytes) -> list[ParsedRow]:
     totals = {"in": Decimal(0), "out": Decimal(0)}
     glance: dict[str, Decimal] = {}
     period: tuple[int, int, int] | None = None
+    # Running-balance ledger check: every printed balance must equal the
+    # start balance plus every parsed transaction so far. Catches per-row
+    # sign/column errors that cancelling totals would miss.
+    running: Decimal | None = None
+    balance_errors: list[str] = []
 
     from pdfplumber.utils.text import extract_words
 
@@ -175,12 +180,20 @@ def parse_pdf(data: bytes) -> list[ParsedRow]:
                 if desc.startswith(("Anything Wrong", "If you've spotted")):
                     break  # everything below is boilerplate, not table
                 if desc.startswith(("Start balance", "End balance", "Continued")):
+                    for value, center in amounts:
+                        if abs(center - col_bal) < abs(center - col_out) and running is None:
+                            running = value  # start balance anchors the ledger
+                        elif desc.startswith("End balance") and running is not None and value != running:
+                            balance_errors.append(
+                                f"end balance printed {value}, ledger says {running}"
+                            )
                     continue
                 if desc.startswith("Ref:") and rows:
                     rows[-1].description += f" ({desc})"
                     continue
 
                 tx_amounts = []
+                printed_balance = None
                 for value, center in amounts:
                     column = min(
                         (("out", col_out), ("in", col_in), ("bal", col_bal)),
@@ -188,21 +201,36 @@ def parse_pdf(data: bytes) -> list[ParsedRow]:
                     )[0]
                     if column in ("out", "in"):
                         tx_amounts.append((value, column))
+                    else:
+                        printed_balance = value
 
                 if tx_amounts and current_date:
                     value, column = tx_amounts[0]
                     totals[column] += value
+                    signed = -value if column == "out" else value
                     rows.append(
                         ParsedRow(
                             date=current_date,
                             description=desc or "Barclays transaction",
-                            amount=-value if column == "out" else value,
+                            amount=signed,
                         )
                     )
+                    if running is not None:
+                        running += signed
+                        if printed_balance is not None and printed_balance != running:
+                            balance_errors.append(
+                                f"{current_date} {desc[:40]!r}: printed balance "
+                                f"{printed_balance}, ledger says {running}"
+                            )
+                            running = printed_balance  # re-anchor; report once
                 elif desc and rows and not amounts:
                     # Wrapped description ("...Ruben Tjon A" / "Meeuw").
                     rows[-1].description = normalize_whitespace(rows[-1].description + " " + desc)
 
+    if balance_errors:
+        raise StatementDecodeError(
+            "Running-balance check failed — not importing: " + "; ".join(balance_errors[:5])
+        )
     _validate(rows, totals, glance)
     return rows
 
