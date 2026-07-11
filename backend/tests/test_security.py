@@ -41,3 +41,42 @@ def test_foreign_host_rejected():
     client = make_client()
     r = client.get("/api/health", headers={"host": "rebind.attacker.example"})
     assert r.status_code == 400
+
+
+# --- H2: X-Budget-App custom header required on state-changing requests ---
+
+CSRF_HEADER = {"X-Budget-App": "1"}
+
+
+def test_post_without_header_rejected():
+    client = make_client()
+    body = {"account_id": 0, "date": "2026-07-10", "description": "Coffee", "amount": -3.5}
+    r = client.post("/api/transactions", json=body)
+    assert r.status_code == 403
+    assert "X-Budget-App" in r.json()["detail"]
+
+
+def test_multipart_upload_without_header_rejected():
+    # /api/imports takes multipart, which a plain HTML form could submit.
+    client = make_client()
+    r = client.post("/api/imports", files={"file": ("x.csv", b"Date,Description,Amount\n")})
+    assert r.status_code == 403
+
+
+def test_patch_and_delete_without_header_rejected():
+    client = make_client()
+    assert client.patch("/api/transactions/1", json={"category_id": None}).status_code == 403
+    assert client.delete("/api/transactions/1").status_code == 403
+
+
+def test_post_with_header_works():
+    client = make_client()
+    body = {"account_id": 0, "date": "2026-07-10", "description": "Coffee", "amount": -3.5}
+    r = client.post("/api/transactions", json=body, headers=CSRF_HEADER)
+    assert r.status_code == 200
+
+
+def test_get_without_header_works():
+    client = make_client()
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/transactions").status_code == 200

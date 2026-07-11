@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { api } from './api'
 import Dashboard from './Dashboard'
 import './App.css'
 
@@ -110,17 +111,17 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false)
 
   async function detectTransfers() {
-    const res = await (await fetch('/api/transfers/detect', { method: 'POST' })).json()
+    const res = await (await api('/api/transfers/detect', { method: 'POST' })).json()
     setTransferMsg(`${res.pairs} new transfer pair${res.pairs === 1 ? '' : 's'} linked`)
     await Promise.all([loadTxs(), loadReview()])
   }
 
   async function syncMonzo() {
     setTransferMsg('Syncing Monzo…')
-    const res = await fetch('/api/monzo/sync', { method: 'POST' })
+    const res = await api('/api/monzo/sync', { method: 'POST' })
     const data = await res.json()
     if (res.status === 409) {
-      const conn = await fetch('/api/monzo/connect')
+      const conn = await api('/api/monzo/connect')
       const connData = await conn.json()
       if (!conn.ok) {
         setTransferMsg(connData.detail ?? 'Monzo is not configured')
@@ -146,7 +147,7 @@ export default function App() {
 
   async function syncSplitwise() {
     setTransferMsg('Syncing Splitwise…')
-    const res = await fetch('/api/splitwise/sync', { method: 'POST' })
+    const res = await api('/api/splitwise/sync', { method: 'POST' })
     const data = await res.json()
     if (!res.ok) {
       setTransferMsg(data.detail ?? 'Splitwise sync failed')
@@ -161,8 +162,8 @@ export default function App() {
 
   const loadStatic = useCallback(async () => {
     const [acc, cats] = await Promise.all([
-      fetch('/api/accounts').then((r) => r.json()),
-      fetch('/api/categories').then((r) => r.json()),
+      api('/api/accounts').then((r) => r.json()),
+      api('/api/categories').then((r) => r.json()),
     ])
     setAccounts(acc)
     setCategories(cats)
@@ -177,13 +178,13 @@ export default function App() {
     if (accountFilter !== '') params.set('account_id', String(accountFilter))
     if (categoryFilter !== '') params.set('category_id', String(categoryFilter))
     if (onlyUncategorized) params.set('uncategorized', 'true')
-    const data = await (await fetch(`/api/transactions?${params}`)).json()
+    const data = await (await api(`/api/transactions?${params}`)).json()
     setTxs(data.items)
     setTotal(data.total)
   }, [page, search, accountFilter, categoryFilter, onlyUncategorized])
 
   const loadReview = useCallback(async () => {
-    const data = await (await fetch('/api/review')).json()
+    const data = await (await api('/api/review')).json()
     setReview(data.groups)
     setReviewTotal(data.total_uncategorized)
   }, [])
@@ -202,7 +203,7 @@ export default function App() {
     for (const file of Array.from(files)) {
       const body = new FormData()
       body.append('file', file)
-      const res = await fetch('/api/imports', { method: 'POST', body })
+      const res = await api('/api/imports', { method: 'POST', body })
       if (res.ok) {
         results.push(await res.json())
       } else {
@@ -224,7 +225,7 @@ export default function App() {
   }
 
   async function categorizeTx(tx: Tx, categoryId: number | null) {
-    await fetch(`/api/transactions/${tx.id}`, {
+    await api(`/api/transactions/${tx.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category_id: categoryId }),
@@ -234,7 +235,7 @@ export default function App() {
 
   async function assignGroup(group: ReviewGroup, categoryId: number | null, createRule: boolean) {
     if (categoryId === null) return
-    await fetch('/api/review/assign', {
+    await api('/api/review/assign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -437,7 +438,7 @@ export default function App() {
                         title="Delete this manually entered transaction"
                         onClick={async () => {
                           if (!confirm(`Delete "${t.description}" (${money(t.amount, 'GBP')})?`)) return
-                          await fetch(`/api/transactions/${t.id}`, { method: 'DELETE' })
+                          await api(`/api/transactions/${t.id}`, { method: 'DELETE' })
                           await Promise.all([loadStatic(), loadTxs(), loadReview()])
                         }}
                       >
@@ -517,7 +518,7 @@ function AddTransaction({
       setError('Enter a description and a positive amount.')
       return
     }
-    const res = await fetch('/api/transactions', {
+    const res = await api('/api/transactions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -596,7 +597,7 @@ function AddCategory({ onAdded }: { onAdded: () => void }) {
   async function add() {
     const trimmed = name.trim()
     if (!trimmed) return
-    await fetch('/api/categories', {
+    await api('/api/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: trimmed }),
@@ -625,7 +626,7 @@ function TrainModel({ onDone }: { onDone: () => void }) {
   async function trainNow() {
     setBusy(true)
     try {
-      const res = await fetch('/api/model/train', { method: 'POST' })
+      const res = await api('/api/model/train', { method: 'POST' })
       const data = await res.json()
       if (!res.ok) {
         setResult(data.detail ?? 'Training failed')
@@ -659,7 +660,7 @@ function AskClaude({ onDone }: { onDone: () => void }) {
     setBusy(true)
     setResult('Asking Claude — this can take a few minutes…')
     try {
-      const res = await fetch('/api/llm/categorize', { method: 'POST' })
+      const res = await api('/api/llm/categorize', { method: 'POST' })
       const data = await res.json()
       if (!res.ok) {
         setResult(data.detail ?? 'LLM categorization failed')

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { api } from './api'
 import './Dashboard.css'
 
 type MonthRow = {
@@ -72,21 +73,21 @@ export default function Dashboard() {
   const [recurring, setRecurring] = useState<RecurringItem[]>([])
 
   useEffect(() => {
-    fetch('/api/stats/overview?months=12')
+    api('/api/stats/overview?months=12')
       .then((r) => r.json())
       .then((data: Overview) => {
         setOverview(data)
         if (data.months.length) setSelected(data.months[data.months.length - 1].month)
         if (data.categories.length) setSelectedCat(data.categories[0].id)
       })
-    fetch('/api/stats/recurring')
+    api('/api/stats/recurring')
       .then((r) => r.json())
       .then((d) => setRecurring(d.items))
   }, [])
 
   useEffect(() => {
     if (selected) {
-      fetch(`/api/stats/month/${selected}`)
+      api(`/api/stats/month/${selected}`)
         .then((r) => r.json())
         .then(setDetail)
     }
@@ -291,7 +292,7 @@ function CategoryView({
 }) {
   const [merchants, setMerchants] = useState<MonthDetail['merchants']>([])
   useEffect(() => {
-    fetch(`/api/stats/category/${selectedCat}/merchants`)
+    api(`/api/stats/category/${selectedCat}/merchants`)
       .then((r) => r.json())
       .then((d) => setMerchants(d.merchants))
   }, [selectedCat])

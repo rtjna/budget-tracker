@@ -49,6 +49,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# CSRF protection: every state-changing request must carry X-Budget-App: 1.
+# HTML forms cannot set custom headers, and cross-origin fetch() with one
+# forces a CORS preflight (which the CORS policy above only grants to the
+# Vite dev origin), so a hostile page can't fire POSTs at this API. GET,
+# HEAD and OPTIONS are exempt: reads are safe, and OPTIONS preflights by
+# definition can't carry the header. The Monzo OAuth callback is a GET, so
+# it stays reachable from a plain browser redirect.
+CSRF_HEADER = "x-budget-app"
+
+
+@app.middleware("http")
+async def require_custom_header(request, call_next):
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Missing X-Budget-App header (CSRF protection)"},
+        )
+    return await call_next(request)
+
 
 @app.get("/api/health")
 def health():
