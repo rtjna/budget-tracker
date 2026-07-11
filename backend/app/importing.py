@@ -36,7 +36,10 @@ def get_or_create_account(db: Session, importer, name: str, currency: str) -> Ac
 
 
 def import_file(db: Session, filename: str, text: str) -> ImportBatch:
-    reader = csv.reader(io.StringIO(text))
+    # Continental exports (e.g. ZKB) are semicolon-delimited.
+    first_line = text.splitlines()[0] if text.splitlines() else ""
+    delimiter = ";" if first_line.count(";") > first_line.count(",") else ","
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     header = next(reader, None)
     if header is None:
         raise UnrecognizedFileError("File is empty")
