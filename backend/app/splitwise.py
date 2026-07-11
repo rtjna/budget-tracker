@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 from .categorize import normalize_merchant
 from .models import Account, Category, ImportBatch, Transaction
 from .secrets_env import get_secret
-from .stats import GBP_RATES
+from .stats import GBP_RATES, to_gbp
 from .transfers import TRANSFERISH
 
 API = "https://secure.splitwise.com/api/v3.0"
@@ -152,11 +152,20 @@ def _settleish(tx: Transaction) -> bool:
     return bool(TRANSFERISH.search(text) or SETTLEISH.search(text))
 
 
-def _match_settlement(db: Session, account: Account, amount_gbp: Decimal, when: date) -> Transaction | None:
+# When the Splitwise payment is not in GBP, our conversion uses approximate
+# hardcoded rates, so the bank amount will rarely match to the penny. Accept
+# anything within this fraction of the converted amount.
+FX_TOLERANCE = Decimal("0.025")
+
+
+def _match_settlement(
+    db: Session, account: Account, amount_gbp: Decimal, when: date, currency: str = "GBP"
+) -> Transaction | None:
     """Find an unlinked bank transaction that looks like this settle-up:
-    exact amount, within the window, transfer/person-to-person-looking
-    description, not in the Splitwise account. Prefers the candidate closest
-    in date."""
+    matching amount (exact for GBP payments, within FX_TOLERANCE of the
+    converted amount otherwise), within the window, transfer/person-to-
+    person-looking description, not in the Splitwise account. Prefers the
+    candidate closest in date."""
     lo, hi = when - timedelta(days=SETTLE_WINDOW_DAYS), when + timedelta(days=SETTLE_WINDOW_DAYS)
     candidates = db.scalars(
         select(Transaction)
@@ -168,11 +177,14 @@ def _match_settlement(db: Session, account: Account, amount_gbp: Decimal, when: 
             Transaction.date <= hi,
         )
     ).all()
-    matches = [
-        tx
-        for tx in candidates
-        if tx.account.currency == "GBP" and Decimal(tx.amount) == amount_gbp and _settleish(tx)
-    ]
+
+    def amount_matches(tx: Transaction) -> bool:
+        if currency == "GBP":
+            return tx.account.currency == "GBP" and Decimal(tx.amount) == amount_gbp
+        tx_gbp = to_gbp(Decimal(tx.amount), tx.account.currency)
+        return abs(tx_gbp - amount_gbp) <= abs(amount_gbp) * FX_TOLERANCE
+
+    matches = [tx for tx in candidates if amount_matches(tx) and _settleish(tx)]
     return min(matches, key=lambda t: abs(t.date - when), default=None)
 
 
@@ -214,7 +226,7 @@ def sync(db: Session, client: SplitwiseClient | None = None) -> dict:
             # net > 0: I paid a friend -> bank shows -net. net < 0: friend paid
             # me -> bank shows -net (positive). Bank side is always -net; the
             # mirror leg is +net so the pair sums to zero.
-            bank_tx = _match_settlement(db, account, -net_gbp, when)
+            bank_tx = _match_settlement(db, account, -net_gbp, when, currency)
             if bank_tx is None:
                 stats["settlements_pending"] += 1  # retried on next sync
                 continue

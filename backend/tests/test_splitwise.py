@@ -134,6 +134,50 @@ def test_settlement_alone_with_purchase_stays_pending():
     assert shop.transfer_peer_id is None
 
 
+def test_non_gbp_settlement_matches_within_tolerance():
+    # Regression (M3): a CHF settle-up converted with approximate rates
+    # never matched the bank amount to the penny. 2.5% tolerance applies to
+    # non-GBP payment currencies only.
+    db, bank = make_db()
+    # Friend pays me 50 CHF -> ~£46.00 at the hardcoded 0.92 rate.
+    payment = {"id": 20, "date": "2026-06-20T00:00:00Z", "currency_code": "CHF", "payment": True,
+               "description": "Payment", "category": {"name": "Payment"},
+               "users": [user(ME, "0.0", "50.0"), user(FRIEND, "50.0", "0.0")]}
+    # Bank credits £46.80 (real FX rate differs from our table): within 2.5%.
+    inflow = bank_tx(db, bank, date(2026, 6, 21), "Received From J Smith", "46.80", "chffp")
+
+    stats = sync(db, client=FakeClient([payment]))
+    assert stats["settlements_linked"] == 1
+    assert inflow.transfer_peer_id is not None
+    mirror = db.scalar(select(Transaction).where(Transaction.account_id != bank.id))
+    assert mirror.amount == Decimal("-46.00")
+
+
+def test_non_gbp_settlement_outside_tolerance_stays_pending():
+    db, bank = make_db()
+    payment = {"id": 21, "date": "2026-06-20T00:00:00Z", "currency_code": "CHF", "payment": True,
+               "description": "Payment", "category": {"name": "Payment"},
+               "users": [user(ME, "0.0", "50.0"), user(FRIEND, "50.0", "0.0")]}
+    # £48.50 is >2.5% away from the converted £46.00.
+    inflow = bank_tx(db, bank, date(2026, 6, 21), "Received From J Smith", "48.50", "chffp2")
+
+    stats = sync(db, client=FakeClient([payment]))
+    assert stats["settlements_pending"] == 1
+    assert inflow.transfer_peer_id is None
+
+
+def test_gbp_settlement_still_requires_exact_amount():
+    db, bank = make_db()
+    payment = {"id": 22, "date": "2026-06-20T00:00:00Z", "currency_code": "GBP", "payment": True,
+               "description": "Payment", "category": {"name": "Payment"},
+               "users": [user(ME, "0.0", "20.0"), user(FRIEND, "20.0", "0.0")]}
+    inflow = bank_tx(db, bank, date(2026, 6, 21), "Received From J Smith", "20.30", "gbpfp")
+
+    stats = sync(db, client=FakeClient([payment]))
+    assert stats["settlements_pending"] == 1
+    assert inflow.transfer_peer_id is None
+
+
 def test_settlement_prefers_candidate_closest_in_date():
     db, bank = make_db()
     payment = {"id": 12, "date": "2026-06-20T00:00:00Z", "currency_code": "GBP", "payment": True,
