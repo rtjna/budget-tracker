@@ -448,16 +448,25 @@ def create_category(body: CategoryBody, db: Session = Depends(get_db)):
 
 @app.delete("/api/categories/{category_id}")
 def delete_category(category_id: int, db: Session = Depends(get_db)):
-    used = db.scalar(
-        select(func.count())
-        .select_from(models.Transaction)
-        .where(models.Transaction.category_id == category_id)
-    )
-    if used:
-        raise HTTPException(status_code=409, detail=f"Category is used by {used} transactions")
     category = db.get(models.Category, category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
+    # Block deletion while anything still references the category; with
+    # SQLite FK enforcement on, deleting anyway would fail at commit time
+    # with an opaque IntegrityError.
+    references = [
+        ("transactions", models.Transaction, models.Transaction.category_id),
+        ("rules", models.Rule, models.Rule.category_id),
+        ("LLM merchant cache entries", models.LlmMerchantCache, models.LlmMerchantCache.category_id),
+        ("subcategories", models.Category, models.Category.parent_id),
+    ]
+    used_by = []
+    for label, model, column in references:
+        count = db.scalar(select(func.count()).select_from(model).where(column == category_id))
+        if count:
+            used_by.append(f"{count} {label}")
+    if used_by:
+        raise HTTPException(status_code=409, detail=f"Category is used by {', '.join(used_by)}")
     db.delete(category)
     db.commit()
     return {"deleted": category_id}

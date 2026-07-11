@@ -1,11 +1,24 @@
 import os
+import sqlite3
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DATA_DIR = Path(os.environ.get("DATA_DIR") or Path(__file__).resolve().parents[2] / "data")
 DATA_DIR.mkdir(exist_ok=True)
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    """SQLite ships with foreign key enforcement OFF per connection; turn it
+    on everywhere (registered on the Engine class so test engines get it
+    too) so dangling category/account/batch references can't be written."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 engine = create_engine(
     f"sqlite:///{DATA_DIR / 'budget.sqlite3'}",
