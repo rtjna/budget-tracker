@@ -15,6 +15,7 @@ at most once (fingerprinted by Splitwise id).
 """
 
 import hashlib
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -25,6 +26,7 @@ from .categorize import normalize_merchant
 from .models import Account, Category, ImportBatch, Transaction
 from .secrets_env import get_secret
 from .stats import GBP_RATES
+from .transfers import TRANSFERISH
 
 API = "https://secure.splitwise.com/api/v3.0"
 ACCOUNT_NAME = "Splitwise"
@@ -129,9 +131,32 @@ def _my_shares(expense: dict, user_id: int) -> tuple[Decimal, Decimal] | None:
     return None
 
 
+# A settle-up should land on something that looks like a person-to-person or
+# transfer-ish payment, never on a coincidental same-amount purchase/refund.
+# TRANSFERISH covers own-account transfer shapes; SETTLEISH adds
+# person-to-person credits ("Received From", "From J Smith", TWINT, Faster
+# Payments) and generic "payment" wording.
+SETTLEISH = re.compile(
+    r"RECEIVED FROM|SENT TO|\bFROM\b|TWINT|FASTER PAYMENT|\bPAYMENT\b",
+    re.IGNORECASE,
+)
+# ... but obvious card-purchase shapes are never a settle-up, even though
+# they contain "PAYMENT".
+CARD_PURCHASE = re.compile(r"CARD PAYMENT|CONTACTLESS|\bPOS\b|PURCHASE", re.IGNORECASE)
+
+
+def _settleish(tx: Transaction) -> bool:
+    text = f"{tx.description or ''} {tx.merchant or ''}"
+    if CARD_PURCHASE.search(text):
+        return False
+    return bool(TRANSFERISH.search(text) or SETTLEISH.search(text))
+
+
 def _match_settlement(db: Session, account: Account, amount_gbp: Decimal, when: date) -> Transaction | None:
     """Find an unlinked bank transaction that looks like this settle-up:
-    exact amount, within the window, not in the Splitwise account."""
+    exact amount, within the window, transfer/person-to-person-looking
+    description, not in the Splitwise account. Prefers the candidate closest
+    in date."""
     lo, hi = when - timedelta(days=SETTLE_WINDOW_DAYS), when + timedelta(days=SETTLE_WINDOW_DAYS)
     candidates = db.scalars(
         select(Transaction)
@@ -143,10 +168,12 @@ def _match_settlement(db: Session, account: Account, amount_gbp: Decimal, when: 
             Transaction.date <= hi,
         )
     ).all()
-    for tx in candidates:
-        if tx.account.currency == "GBP" and Decimal(tx.amount) == amount_gbp:
-            return tx
-    return None
+    matches = [
+        tx
+        for tx in candidates
+        if tx.account.currency == "GBP" and Decimal(tx.amount) == amount_gbp and _settleish(tx)
+    ]
+    return min(matches, key=lambda t: abs(t.date - when), default=None)
 
 
 def sync(db: Session, client: SplitwiseClient | None = None) -> dict:

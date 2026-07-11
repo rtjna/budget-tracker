@@ -94,3 +94,55 @@ def test_settlement_links_bank_tx_and_retries_when_missing():
     mirror = db.scalar(select(Transaction).where(Transaction.account_id != bank.id))
     assert mirror.amount == Decimal("-20.00")
     assert inflow.transfer_peer_id == mirror.id and mirror.transfer_peer_id == inflow.id
+
+
+def bank_tx(db, bank, day, desc, amount, fp):
+    tx = Transaction(account_id=bank.id, date=day, description=desc,
+                     merchant=desc.upper(), amount=Decimal(amount), fingerprint=fp)
+    db.add(tx)
+    db.commit()
+    return tx
+
+
+def test_settlement_skips_same_amount_purchase_refund():
+    # Regression (M2): a same-amount shop refund inside the window must not
+    # be mistaken for the settle-up; the person-to-person credit is chosen.
+    db, bank = make_db()
+    payment = {"id": 10, "date": "2026-06-20T00:00:00Z", "currency_code": "GBP", "payment": True,
+               "description": "Payment", "category": {"name": "Payment"},
+               "users": [user(ME, "0.0", "20.0"), user(FRIEND, "20.0", "0.0")]}
+    shop = bank_tx(db, bank, date(2026, 6, 20), "PRET A MANGER LONDON", "20.00", "shopfp")
+    friend = bank_tx(db, bank, date(2026, 6, 21), "Received From J Smith", "20.00", "friendfp")
+
+    stats = sync(db, client=FakeClient([payment]))
+    assert stats["settlements_linked"] == 1
+    assert shop.transfer_peer_id is None
+    assert friend.transfer_peer_id is not None
+
+
+def test_settlement_alone_with_purchase_stays_pending():
+    # If the only same-amount candidate is a purchase-looking row, keep the
+    # settlement pending rather than linking a false positive.
+    db, bank = make_db()
+    payment = {"id": 11, "date": "2026-06-20T00:00:00Z", "currency_code": "GBP", "payment": True,
+               "description": "Payment", "category": {"name": "Payment"},
+               "users": [user(ME, "0.0", "20.0"), user(FRIEND, "20.0", "0.0")]}
+    shop = bank_tx(db, bank, date(2026, 6, 20), "PRET A MANGER LONDON", "20.00", "shopfp")
+
+    stats = sync(db, client=FakeClient([payment]))
+    assert stats["settlements_pending"] == 1
+    assert shop.transfer_peer_id is None
+
+
+def test_settlement_prefers_candidate_closest_in_date():
+    db, bank = make_db()
+    payment = {"id": 12, "date": "2026-06-20T00:00:00Z", "currency_code": "GBP", "payment": True,
+               "description": "Payment", "category": {"name": "Payment"},
+               "users": [user(ME, "0.0", "20.0"), user(FRIEND, "20.0", "0.0")]}
+    far = bank_tx(db, bank, date(2026, 6, 24), "Received From J Smith", "20.00", "farfp")
+    near = bank_tx(db, bank, date(2026, 6, 20), "Received From J Smith", "20.00", "nearfp")
+
+    stats = sync(db, client=FakeClient([payment]))
+    assert stats["settlements_linked"] == 1
+    assert near.transfer_peer_id is not None
+    assert far.transfer_peer_id is None
