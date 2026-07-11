@@ -45,6 +45,58 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/monzo/status")
+def monzo_status():
+    from . import monzo
+
+    return monzo.status()
+
+
+@app.get("/api/monzo/connect")
+def monzo_connect():
+    from . import monzo
+
+    try:
+        return {"url": monzo.connect_url()}
+    except monzo.MonzoError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/api/monzo/callback")
+def monzo_callback(code: str, state: str):
+    from fastapi.responses import HTMLResponse
+
+    from . import monzo
+
+    try:
+        monzo.handle_callback(code, state)
+    except monzo.MonzoError as e:
+        return HTMLResponse(f"<h3>Monzo connection failed</h3><p>{e}</p>", status_code=400)
+    return HTMLResponse(
+        "<h3>Monzo connected ✓</h3>"
+        "<p>Now open the <strong>Monzo app</strong> and approve access "
+        "(Settings → Privacy &amp; security, or the prompt it shows you), then go back "
+        "to Budget Tracker and press <strong>Sync Monzo</strong> within 5 minutes "
+        "to capture your full history.</p>"
+    )
+
+
+@app.post("/api/monzo/sync")
+def monzo_sync(db: Session = Depends(get_db)):
+    from . import monzo
+
+    try:
+        result = monzo.sync(db)
+    except monzo.NotConnected as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except monzo.MonzoError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    result["transfers"] = detect_transfers(db)
+    result["model_categorized"] = apply_model(db)["applied"]
+    db.commit()
+    return result
+
+
 @app.get("/api/splitwise/status")
 def splitwise_status():
     from .secrets_env import get_secret

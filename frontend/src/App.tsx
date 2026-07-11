@@ -115,6 +115,35 @@ export default function App() {
     await Promise.all([loadTxs(), loadReview()])
   }
 
+  async function syncMonzo() {
+    setTransferMsg('Syncing Monzo…')
+    const res = await fetch('/api/monzo/sync', { method: 'POST' })
+    const data = await res.json()
+    if (res.status === 409) {
+      const conn = await fetch('/api/monzo/connect')
+      const connData = await conn.json()
+      if (!conn.ok) {
+        setTransferMsg(connData.detail ?? 'Monzo is not configured')
+        return
+      }
+      window.open(connData.url, '_blank')
+      setTransferMsg(
+        'Monzo consent page opened — authorise there, approve in the Monzo app, then press Sync Monzo again (within 5 minutes for full history).',
+      )
+      return
+    }
+    if (!res.ok) {
+      setTransferMsg(data.detail ?? 'Monzo sync failed')
+      return
+    }
+    setTransferMsg(
+      `Monzo: ${data.new} new transactions across ${data.accounts} account(s), ` +
+        `${data.duplicates} duplicates, ${data.transfers} transfers linked` +
+        (data.window_limited ? ' — note: only the last 90 days were available (SCA window)' : ''),
+    )
+    await Promise.all([loadStatic(), loadTxs(), loadReview()])
+  }
+
   async function syncSplitwise() {
     setTransferMsg('Syncing Splitwise…')
     const res = await fetch('/api/splitwise/sync', { method: 'POST' })
@@ -343,6 +372,9 @@ export default function App() {
             </button>
             <button onClick={syncSplitwise} title="Import shared-expense corrections from Splitwise">
               ⚖ Sync Splitwise
+            </button>
+            <button onClick={syncMonzo} title="Sync transactions from the Monzo API">
+              ⚡ Sync Monzo
             </button>
             <button onClick={() => setShowAdd(!showAdd)} title="Enter a transaction manually">
               {showAdd ? '× Close' : '+ Add transaction'}
