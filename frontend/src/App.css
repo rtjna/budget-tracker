@@ -226,3 +226,42 @@
   align-items: center;
   gap: 0.6rem;
 }
+
+.add-tx {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid #8884;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+}
+
+.add-tx input,
+.add-tx select {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #8886;
+  border-radius: 6px;
+  background: inherit;
+  color: inherit;
+  font-size: 0.88rem;
+}
+
+.add-tx-desc { flex: 1; min-width: 12rem; }
+.add-tx-amount { width: 7rem; }
+.add-tx .error { color: #d33; font-size: 0.8rem; }
+
+.row-actions { width: 1.5rem; }
+
+.delete-btn {
+  border: none;
+  background: none;
+  color: #d33;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.3rem;
+  opacity: 0.35;
+}
+
+.delete-btn:hover { opacity: 1; }

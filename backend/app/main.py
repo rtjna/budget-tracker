@@ -241,10 +241,72 @@ def list_transactions(
                 "category_id": t.category_id,
                 "category_source": t.category_source,
                 "transfer_peer_id": t.transfer_peer_id,
+                "manual": t.import_batch_id is None,
             }
             for t in txs
         ],
     }
+
+
+class ManualTransactionBody(BaseModel):
+    account_id: int  # 0 = the manual "Cash" account (created on demand)
+    date: date
+    description: str
+    amount: float  # signed: negative = money out
+    category_id: int | None = None
+
+
+@app.post("/api/transactions")
+def create_transaction(body: ManualTransactionBody, db: Session = Depends(get_db)):
+    import uuid
+
+    from .categorize import normalize_merchant
+
+    if body.account_id == 0:
+        account = db.scalar(select(models.Account).where(models.Account.name == "Cash"))
+        if account is None:
+            account = models.Account(name="Cash", provider="manual", kind="cash", currency="GBP")
+            db.add(account)
+            db.flush()
+    else:
+        account = db.get(models.Account, body.account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+    description = body.description.strip()
+    if not description or body.amount == 0:
+        raise HTTPException(status_code=422, detail="Description and a non-zero amount are required")
+
+    tx = models.Transaction(
+        account_id=account.id,
+        date=body.date,
+        description=description,
+        merchant=normalize_merchant(description),
+        amount=body.amount,
+        category_id=body.category_id,
+        category_source="human" if body.category_id is not None else None,
+        # Manual entries deliberately bypass import dedup.
+        fingerprint=f"manual|{uuid.uuid4()}",
+    )
+    db.add(tx)
+    db.commit()
+    return {"id": tx.id, "account_id": account.id}
+
+
+@app.delete("/api/transactions/{tx_id}")
+def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
+    tx = db.get(models.Transaction, tx_id)
+    if tx is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if tx.import_batch_id is not None:
+        raise HTTPException(status_code=409, detail="Only manually entered transactions can be deleted")
+    if tx.transfer_peer_id is not None:
+        peer = db.get(models.Transaction, tx.transfer_peer_id)
+        if peer is not None:
+            peer.transfer_peer_id = None
+    db.delete(tx)
+    db.commit()
+    return {"deleted": tx_id}
 
 
 class CategorizeBody(BaseModel):

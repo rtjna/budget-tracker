@@ -24,6 +24,7 @@ type Tx = {
   category_id: number | null
   category_source: string | null
   transfer_peer_id: number | null
+  manual: boolean
 }
 
 type ReviewGroup = {
@@ -106,6 +107,7 @@ export default function App() {
   const [imports, setImports] = useState<ImportResult[]>([])
   const [dragging, setDragging] = useState(false)
   const [transferMsg, setTransferMsg] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
 
   async function detectTransfers() {
     const res = await (await fetch('/api/transfers/detect', { method: 'POST' })).json()
@@ -342,8 +344,21 @@ export default function App() {
             <button onClick={syncSplitwise} title="Import shared-expense corrections from Splitwise">
               ⚖ Sync Splitwise
             </button>
+            <button onClick={() => setShowAdd(!showAdd)} title="Enter a transaction manually">
+              {showAdd ? '× Close' : '+ Add transaction'}
+            </button>
           </section>
           {transferMsg && <p className="review-intro">{transferMsg}</p>}
+          {showAdd && (
+            <AddTransaction
+              accounts={accounts}
+              categories={categories}
+              onAdded={async () => {
+                setShowAdd(false)
+                await Promise.all([loadStatic(), loadTxs(), loadReview()])
+              }}
+            />
+          )}
 
           <table className="tx-table">
             <thead>
@@ -352,6 +367,7 @@ export default function App() {
                 <th>Description</th>
                 <th>Category</th>
                 <th className="num">Amount</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -381,6 +397,21 @@ export default function App() {
                   </td>
                   <td className={`num ${t.amount < 0 ? 'out' : 'in'}`}>
                     {money(t.amount, accounts.find((a) => a.id === t.account_id)?.currency ?? 'GBP')}
+                  </td>
+                  <td className="row-actions">
+                    {t.manual && (
+                      <button
+                        className="delete-btn"
+                        title="Delete this manually entered transaction"
+                        onClick={async () => {
+                          if (!confirm(`Delete "${t.description}" (${money(t.amount, 'GBP')})?`)) return
+                          await fetch(`/api/transactions/${t.id}`, { method: 'DELETE' })
+                          await Promise.all([loadStatic(), loadTxs(), loadReview()])
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -425,6 +456,106 @@ export default function App() {
         </section>
       )}
     </main>
+  )
+}
+
+function AddTransaction({
+  accounts,
+  categories,
+  onAdded,
+}: {
+  accounts: Account[]
+  categories: Category[]
+  onAdded: () => void
+}) {
+  const today = new Date().toISOString().slice(0, 10)
+  const [form, setForm] = useState({
+    date: today,
+    description: '',
+    amount: '',
+    kind: 'expense' as 'expense' | 'income',
+    accountId: 0, // 0 = Cash (manual)
+    categoryId: '' as number | '',
+  })
+  const [error, setError] = useState('')
+
+  async function submit() {
+    const value = Number(form.amount)
+    if (!form.description.trim() || !value || value <= 0) {
+      setError('Enter a description and a positive amount.')
+      return
+    }
+    const res = await fetch('/api/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_id: form.accountId,
+        date: form.date,
+        description: form.description.trim(),
+        amount: form.kind === 'expense' ? -value : value,
+        category_id: form.categoryId === '' ? null : form.categoryId,
+      }),
+    })
+    if (!res.ok) {
+      setError((await res.json()).detail ?? 'Failed to add transaction')
+      return
+    }
+    onAdded()
+  }
+
+  return (
+    <div className="add-tx">
+      <input
+        type="date"
+        value={form.date}
+        max={today}
+        onChange={(e) => setForm({ ...form, date: e.target.value })}
+      />
+      <input
+        className="add-tx-desc"
+        placeholder="Description (e.g. Farmers market)"
+        value={form.description}
+        onChange={(e) => setForm({ ...form, description: e.target.value })}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+      />
+      <select
+        value={form.kind}
+        onChange={(e) => setForm({ ...form, kind: e.target.value as 'expense' | 'income' })}
+      >
+        <option value="expense">Expense</option>
+        <option value="income">Money in</option>
+      </select>
+      <input
+        className="add-tx-amount"
+        type="number"
+        min="0.01"
+        step="0.01"
+        placeholder="Amount £"
+        value={form.amount}
+        onChange={(e) => setForm({ ...form, amount: e.target.value })}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+      />
+      <select
+        value={form.accountId}
+        onChange={(e) => setForm({ ...form, accountId: Number(e.target.value) })}
+      >
+        <option value={0}>Cash (manual)</option>
+        {accounts
+          .filter((a) => a.provider !== 'splitwise')
+          .map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+      </select>
+      <CategorySelect
+        categories={categories}
+        value={form.categoryId}
+        onChange={(id) => setForm({ ...form, categoryId: id ?? '' })}
+      />
+      <button onClick={submit}>Add</button>
+      {error && <span className="error">{error}</span>}
+    </div>
   )
 }
 
