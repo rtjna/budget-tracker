@@ -8,10 +8,15 @@ from sqlalchemy.orm import Session, joinedload
 from .models import Transaction
 
 # Descriptions that suggest a movement between own accounts rather than a
-# purchase. One leg matching this is required for small same-currency pairs
-# so that e.g. two genuine £4.60 coffees on different cards never pair up.
+# purchase. One leg matching this is required for every same-currency pair —
+# regardless of size — so that e.g. two genuine £4.60 coffees, or a salary
+# and a same-amount rent payment, never pair up. Bare "PAYMENT" is
+# deliberately not enough: card purchases ("CARD PAYMENT PRET") and rent
+# ("RENT PAYMENT") contain it; only specific shapes like "PAYMENT RECEIVED",
+# "BILL PAYMENT" and "PAYMENT TO/FROM" count.
 TRANSFERISH = re.compile(
-    r"PAYMENT|TRANSFER|EXCHANGE|TOP ?UP|THANK YOU|REVOLUT|AMEX|AMERICAN EXPRESS"
+    r"PAYMENT RECEIVED|BILL PAYMENT|PAYMENT (TO|FROM)\b|TRANSFER|EXCHANGE|TOP ?UP"
+    r"|THANK YOU|REVOLUT|AMEX|AMERICAN EXPRESS"
     r"|MONZO|BARCLAY|SAVING|STANDING ORDER|DIRECT DEBIT RECEIVED",
     re.IGNORECASE,
 )
@@ -19,9 +24,6 @@ TRANSFERISH = re.compile(
 EXCHANGE = re.compile(r"\bEXCHANGED? (TO|FROM)\b", re.IGNORECASE)
 
 MAX_DATE_DIFF = timedelta(days=3)
-# Above this size a same-amount opposite-sign pair across accounts is
-# considered a transfer even without a transfer-ish description.
-LARGE_AMOUNT = Decimal("100")
 
 
 def _unmatched(db: Session) -> list[Transaction]:
@@ -57,12 +59,12 @@ def _match_same_currency(txs: list[Transaction]) -> int:
             and t.account_id != out.account_id
             and abs(t.date - out.date) <= MAX_DATE_DIFF
         ]
+        # At least one leg must look transfer-ish, whatever the amount:
+        # matching on amount+date alone links coincidences like salary vs.
+        # same-amount rent.
+        if not TRANSFERISH.search(out.description):
+            candidates = [c for c in candidates if TRANSFERISH.search(c.description)]
         if not candidates:
-            continue
-        if -Decimal(out.amount) < LARGE_AMOUNT and not (
-            TRANSFERISH.search(out.description)
-            or any(TRANSFERISH.search(c.description) for c in candidates)
-        ):
             continue
         best = min(candidates, key=lambda t: abs(t.date - out.date))
         _link(out, best)

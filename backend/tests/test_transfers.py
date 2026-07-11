@@ -61,7 +61,8 @@ def test_small_identical_purchases_not_matched():
     assert detect_transfers(db) == 0
 
 
-def test_large_same_amount_pair_matched_without_keywords():
+def test_large_pair_needs_transferish_keyword_on_one_leg():
+    # One transfer-ish leg ("savings") is enough; the other can be anything.
     db = make_session()
     _, rev, _ = make_accounts(db)
     other = Account(name="Barclays", provider="barclays", kind="current", currency="GBP")
@@ -73,6 +74,51 @@ def test_large_same_amount_pair_matched_without_keywords():
 
     assert detect_transfers(db) == 1
     assert a.transfer_peer_id == b.id
+
+
+def test_salary_vs_rent_same_amount_not_linked():
+    # Regression (M1): a £1,200 salary and a £1,200 rent payment in the same
+    # week are not a transfer — the old large-amount bypass linked them.
+    db = make_session()
+    _, rev, _ = make_accounts(db)
+    barclays = Account(name="Barclays", provider="barclays", kind="current", currency="GBP")
+    db.add(barclays)
+    db.flush()
+    salary = add_tx(db, barclays, date(2026, 6, 25), "ACME LTD SALARY", "1200.00")
+    rent = add_tx(db, rev, date(2026, 6, 26), "RENT J SMITH LANDLORD", "-1200.00")
+    db.commit()
+
+    assert detect_transfers(db) == 0
+    assert salary.transfer_peer_id is None and rent.transfer_peer_id is None
+
+
+def test_small_refund_vs_card_payment_not_linked():
+    # Regression (M1): bare "PAYMENT" in a card purchase description used to
+    # satisfy the transfer-ish requirement and link it to a coincidental
+    # same-amount refund.
+    db = make_session()
+    amex, rev, _ = make_accounts(db)
+    add_tx(db, amex, date(2026, 6, 10), "CARD PAYMENT PRET A MANGER", "-4.60")
+    add_tx(db, rev, date(2026, 6, 11), "Boots refund", "4.60")
+    db.commit()
+
+    assert detect_transfers(db) == 0
+
+
+def test_amex_bill_payment_still_links():
+    # Real data relies on this pairing: Amex statement credit vs. the bank's
+    # "Bill Payment to American Exp".
+    db = make_session()
+    amex, _, _ = make_accounts(db)
+    barclays = Account(name="Barclays", provider="barclays", kind="current", currency="GBP")
+    db.add(barclays)
+    db.flush()
+    credit = add_tx(db, amex, date(2026, 6, 27), "PAYMENT RECEIVED - THANK YOU", "823.10")
+    debit = add_tx(db, barclays, date(2026, 6, 26), "Bill Payment to American Exp", "-823.10")
+    db.commit()
+
+    assert detect_transfers(db) == 1
+    assert credit.transfer_peer_id == debit.id
 
 
 def test_fx_exchange_matched_across_currencies():
