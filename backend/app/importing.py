@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 from collections import defaultdict
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +15,52 @@ from .models import Account, ImportBatch, Transaction
 
 class UnrecognizedFileError(Exception):
     pass
+
+
+class CrossFormatOverlapError(Exception):
+    """The file's rows substantially duplicate rows already imported into the
+    same account through a different format (e.g. Barclays PDF vs. CSV),
+    which fingerprints can't catch because descriptions differ per format."""
+
+
+# Sources that describe the same underlying account through different file
+# formats. Fingerprints include the description, which each format renders
+# differently, so dedup can't stop a statement being imported once per format.
+CROSS_FORMAT_SOURCES = {"barclays_pdf": "barclays", "barclays": "barclays_pdf"}
+# Refuse when more than this share of the file's (date, amount) pairs already
+# exist in the account via the sibling format.
+OVERLAP_THRESHOLD = 0.5
+
+
+def _check_cross_format_overlap(
+    db: Session,
+    source: str,
+    account_ids: list[int],
+    candidates: list[tuple[str, int, ParsedRow]],
+) -> None:
+    other = CROSS_FORMAT_SOURCES.get(source)
+    if other is None:
+        return
+    fps = {fp for fp, _, _ in candidates}
+    pairs = {(row.date, Decimal(row.amount)) for _, _, row in candidates}
+    if not pairs:
+        return
+    existing = db.execute(
+        select(Transaction.date, Transaction.amount, Transaction.fingerprint)
+        .join(ImportBatch, Transaction.import_batch_id == ImportBatch.id)
+        .where(Transaction.account_id.in_(account_ids), ImportBatch.source == other)
+    ).all()
+    # Same-fingerprint rows are ordinary duplicates, handled by normal dedup.
+    existing_pairs = {(d, Decimal(a)) for d, a, fp in existing if fp not in fps}
+    overlap = pairs & existing_pairs
+    if len(overlap) > len(pairs) * OVERLAP_THRESHOLD:
+        dates = sorted(d for d, _ in overlap)
+        raise CrossFormatOverlapError(
+            f"Refusing to import: {len(overlap)} of {len(pairs)} distinct (date, amount) rows "
+            f"in this {source!r} file already exist in the account from a previous {other!r} "
+            f"import ({dates[0]} to {dates[-1]}). Importing the same statement in both CSV and "
+            "PDF form would double-count those transactions."
+        )
 
 
 def fingerprint(account_id: int, row: ParsedRow, ordinal: int) -> str:
@@ -96,6 +143,8 @@ def import_rows(
         account_id = accounts[name].id
         for ordinal, row in enumerate(group):
             candidates.append((fingerprint(account_id, row, ordinal), account_id, row))
+
+    _check_cross_format_overlap(db, source, [a.id for a in accounts.values()], candidates)
 
     existing = set(
         db.scalars(

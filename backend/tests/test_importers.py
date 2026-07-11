@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
@@ -10,7 +10,8 @@ from app.importers import detect_importer
 from app.importers.amex import AmexImporter
 from app.importers.barclays import BarclaysImporter
 from app.importers.revolut import RevolutImporter
-from app.importing import UnrecognizedFileError, import_file
+from app.importers.base import ParsedRow
+from app.importing import CrossFormatOverlapError, UnrecognizedFileError, import_file, import_rows
 from app.models import Transaction
 
 AMEX_CSV = """Date,Description,Amount
@@ -94,6 +95,64 @@ def test_unrecognized_file_rejected():
     db = make_session()
     with pytest.raises(UnrecognizedFileError):
         import_file(db, "junk.csv", "foo,bar\n1,2\n")
+
+
+# --- M4: cross-format double-count guard (Barclays PDF vs. CSV) ---
+
+
+def barclays_pdf_rows():
+    # Same statement as BARCLAYS_CSV, as the PDF parser would render it:
+    # identical dates and amounts, different description text.
+    return [
+        ParsedRow(date=date(2026, 7, 8), description="Sainsburys Smkt", amount=Decimal("-52.30")),
+        ParsedRow(date=date(2026, 7, 7), description="Acme Limited", amount=Decimal("1500.00")),
+    ]
+
+
+def import_pdf_rows(db, rows):
+    return import_rows(
+        db, source="barclays_pdf", filename="statement.pdf", rows=rows,
+        provider="barclays", kind="current", default_account_name="Barclays",
+    )
+
+
+def test_pdf_after_csv_overlap_refused():
+    db = make_session()
+    import_file(db, "b.csv", BARCLAYS_CSV)
+    with pytest.raises(CrossFormatOverlapError) as exc:
+        import_pdf_rows(db, barclays_pdf_rows())
+    msg = str(exc.value)
+    assert "2 of 2" in msg and "2026-07-07" in msg and "2026-07-08" in msg
+    # Nothing was double-inserted.
+    assert db.scalar(select(func.count()).select_from(Transaction)) == 2
+
+
+def test_csv_after_pdf_overlap_refused():
+    db = make_session()
+    import_pdf_rows(db, barclays_pdf_rows())
+    with pytest.raises(CrossFormatOverlapError):
+        import_file(db, "b.csv", BARCLAYS_CSV)
+
+
+def test_minor_overlap_allowed():
+    # 1 of 3 pairs overlapping (<=50%) is a plausible coincidence, not a
+    # re-imported statement.
+    db = make_session()
+    import_file(db, "b.csv", BARCLAYS_CSV)
+    rows = barclays_pdf_rows()[:1] + [
+        ParsedRow(date=date(2026, 8, 1), description="Tesco", amount=Decimal("-9.99")),
+        ParsedRow(date=date(2026, 8, 2), description="Boots", amount=Decimal("-3.49")),
+    ]
+    batch = import_pdf_rows(db, rows)
+    assert batch.new_count == 3
+
+
+def test_same_format_reimport_still_just_dedups():
+    # Re-importing the identical CSV is caught by fingerprints, not refused.
+    db = make_session()
+    import_file(db, "b.csv", BARCLAYS_CSV)
+    again = import_file(db, "b.csv", BARCLAYS_CSV)
+    assert again.new_count == 0 and again.duplicate_count == 2
 
 
 REVOLUT_MULTICURRENCY_CSV = """Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance

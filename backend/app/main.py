@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from . import models
 from .categorize import apply_rules, normalize_merchant, seed_categories
 from .db import Base, SessionLocal, engine, ensure_columns, get_db
-from .importing import UnrecognizedFileError, import_file
+from .importing import CrossFormatOverlapError, UnrecognizedFileError, import_file
 from .ml import apply_model, train
 from .transfers import detect_transfers
 from .xlsx import XlsxError, is_xlsx, xlsx_to_csv_text
@@ -211,7 +211,7 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
                             detail="File is not readable as text (expected UTF-8 or Latin-1 CSV)",
                         )
             batch = import_file(db, file.filename or "upload.csv", text)
-    except UnrecognizedFileError as e:
+    except (CrossFormatOverlapError, UnrecognizedFileError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     transfers = detect_transfers(db)
     model_result = apply_model(db)
