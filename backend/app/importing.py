@@ -48,20 +48,47 @@ def import_file(db: Session, filename: str, text: str) -> ImportBatch:
     if importer is None:
         raise UnrecognizedFileError(f"No importer recognizes the format of {filename!r}")
 
-    rows = importer.parse(text)
+    return import_rows(
+        db,
+        source=importer.name,
+        filename=filename,
+        rows=importer.parse(text),
+        provider=importer.provider,
+        kind=importer.account_kind,
+        default_account_name=importer.default_account_name,
+    )
+
+
+class _ImporterMeta:
+    def __init__(self, provider: str, kind: str):
+        self.provider = provider
+        self.account_kind = kind
+
+
+def import_rows(
+    db: Session,
+    *,
+    source: str,
+    filename: str,
+    rows: list[ParsedRow],
+    provider: str,
+    kind: str,
+    default_account_name: str,
+) -> ImportBatch:
+    meta = _ImporterMeta(provider, kind)
 
     accounts: dict[str, Account] = {}
     for row in rows:
-        name = row.account or importer.default_account_name
+        name = row.account or default_account_name
         if name not in accounts:
-            accounts[name] = get_or_create_account(db, importer, name, row.currency)
+            accounts[name] = get_or_create_account(db, meta, name, row.currency)
 
     # Identical rows (same account/date/description/amount) are legitimate —
     # e.g. two identical coffees in one day — so each occurrence gets an
     # ordinal, making fingerprints stable across overlapping export files.
     groups: dict[tuple, list[ParsedRow]] = defaultdict(list)
     for row in rows:
-        name = row.account or importer.default_account_name
+        name = row.account or default_account_name
         groups[(name, row.date, row.description.lower(), row.amount)].append(row)
 
     candidates: list[tuple[str, int, ParsedRow]] = []
@@ -79,7 +106,7 @@ def import_file(db: Session, filename: str, text: str) -> ImportBatch:
     )
 
     batch = ImportBatch(
-        source=importer.name,
+        source=source,
         filename=filename,
         new_count=0,
         duplicate_count=0,

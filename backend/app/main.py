@@ -83,12 +83,30 @@ def llm_categorize(db: Session = Depends(get_db), max_merchants: int = Query(def
 @app.post("/api/imports")
 async def create_import(file: UploadFile, db: Session = Depends(get_db)):
     data = await file.read()
-    if is_xlsx(data):
-        text = xlsx_to_csv_text(data)
-    else:
-        text = data.decode("utf-8-sig")
     try:
-        batch = import_file(db, file.filename or "upload.csv", text)
+        if data[:5] == b"%PDF-":
+            from .importers.barclays_pdf import StatementDecodeError, parse_pdf
+            from .importing import import_rows
+
+            try:
+                rows = parse_pdf(data)
+            except StatementDecodeError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+            batch = import_rows(
+                db,
+                source="barclays_pdf",
+                filename=file.filename or "statement.pdf",
+                rows=rows,
+                provider="barclays",
+                kind="current",
+                default_account_name="Barclays",
+            )
+        else:
+            if is_xlsx(data):
+                text = xlsx_to_csv_text(data)
+            else:
+                text = data.decode("utf-8-sig")
+            batch = import_file(db, file.filename or "upload.csv", text)
     except UnrecognizedFileError as e:
         raise HTTPException(status_code=422, detail=str(e))
     transfers = detect_transfers(db)
