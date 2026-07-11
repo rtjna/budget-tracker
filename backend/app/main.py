@@ -16,7 +16,7 @@ from .db import Base, SessionLocal, engine, ensure_columns, get_db
 from .importing import UnrecognizedFileError, import_file
 from .ml import apply_model, train
 from .transfers import detect_transfers
-from .xlsx import is_xlsx, xlsx_to_csv_text
+from .xlsx import XlsxError, is_xlsx, xlsx_to_csv_text
 
 from .secrets_env import load_secrets
 
@@ -175,6 +175,13 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
                 rows = parse_pdf(data)
             except StatementDecodeError as e:
                 raise HTTPException(status_code=422, detail=str(e))
+            except Exception:
+                # pdfplumber/pdfminer raise a zoo of exceptions on corrupt,
+                # truncated or password-protected PDFs.
+                raise HTTPException(
+                    status_code=422,
+                    detail="Could not read this PDF — it appears to be corrupt or password-protected",
+                )
             batch = import_rows(
                 db,
                 source="barclays_pdf",
@@ -186,9 +193,23 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
             )
         else:
             if is_xlsx(data):
-                text = xlsx_to_csv_text(data)
+                try:
+                    text = xlsx_to_csv_text(data)
+                except XlsxError as e:
+                    raise HTTPException(status_code=422, detail=str(e))
             else:
-                text = data.decode("utf-8-sig")
+                try:
+                    text = data.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    # Some bank exports arrive in a legacy 8-bit encoding
+                    # (e.g. latin-1 £ signs); fall back before giving up.
+                    try:
+                        text = data.decode("latin-1")
+                    except UnicodeDecodeError:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="File is not readable as text (expected UTF-8 or Latin-1 CSV)",
+                        )
             batch = import_file(db, file.filename or "upload.csv", text)
     except UnrecognizedFileError as e:
         raise HTTPException(status_code=422, detail=str(e))
