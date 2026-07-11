@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
 from app.models import Account, Category, Transaction
-from app.stats import month_detail, monthly_overview, recurring
+from app.stats import category_merchants, month_detail, monthly_overview, recurring
 
 
 def make_db():
@@ -101,3 +101,38 @@ def test_category_totals_respect_window():
     data = monthly_overview(db, months=12)
     (cat,) = [c for c in data["categories"] if c["name"] == "Groceries"]
     assert cat["total"] == 20.0  # the 2020 transaction is outside the window
+
+
+def test_category_merchants_uses_calendar_window():
+    # Regression (M5): the old "last N month-keys with data" window let a
+    # 2020 transaction into a 12-month view, disagreeing with the overview.
+    db, gbp, _, groceries, _ = make_db()
+    add(db, gbp, date(2020, 1, 5), "OLD TESCO", "-500.00", cat=groceries.id)
+    for month in (5, 6):
+        add(db, gbp, date(2026, month, 5), "TESCO", "-10.00", cat=groceries.id)
+    db.commit()
+
+    data = category_merchants(db, groceries.id, months=12)
+    assert data["merchants"] == [{"merchant": "TESCO", "total": 20.0, "count": 2}]
+    # ... and it agrees with monthly_overview's category total.
+    overview = monthly_overview(db, months=12)
+    (cat,) = [c for c in overview["categories"] if c["name"] == "Groceries"]
+    assert cat["total"] == sum(m["total"] for m in data["merchants"])
+
+
+def test_category_merchants_refunds_subtract():
+    db, gbp, jpy, groceries, _ = make_db()
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-30.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 9), "TESCO", "10.00", cat=groceries.id)  # refund
+    add(db, jpy, date(2026, 6, 7), "RAMEN", "-2000", cat=groceries.id)  # ~£10
+    add(db, gbp, date(2026, 6, 28), "SALARY", "3000.00")  # income: not a merchant here
+    db.commit()
+
+    data = category_merchants(db, groceries.id, months=12)
+    by_name = {m["merchant"]: m for m in data["merchants"]}
+    assert by_name["TESCO"]["total"] == 20.0 and by_name["TESCO"]["count"] == 2
+    assert by_name["RAMEN"]["total"] == 10.0  # GBP-converted
+
+    # Uncategorized view (id 0) must not list the salary as spending.
+    uncat = category_merchants(db, 0, months=12)
+    assert all(m["merchant"] != "SALARY" for m in uncat["merchants"])

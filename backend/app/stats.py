@@ -58,6 +58,18 @@ def _spending_transactions(db: Session) -> list[Transaction]:
     return list(db.scalars(query))
 
 
+def _calendar_window(all_keys: list[str], months: int) -> list[str]:
+    """A true calendar window of `months` months ending at the latest month
+    with data — not "the last N keys that happen to contain data", which
+    lets stray old months in. `all_keys` must be sorted "YYYY-MM" strings."""
+    if not all_keys:
+        return []
+    last_y, last_m = map(int, all_keys[-1].split("-"))
+    start_index = (last_y * 12 + (last_m - 1)) - (months - 1)
+    cutoff = f"{start_index // 12:04d}-{start_index % 12 + 1:02d}"
+    return [k for k in all_keys if k >= cutoff]
+
+
 def monthly_overview(db: Session, months: int = 12) -> dict:
     txs = _spending_transactions(db)
     categories = {c.id: c.name for c in db.scalars(select(Category))}
@@ -83,16 +95,7 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
             bucket["spending"] -= gbp
             bucket["by_category"][tx.category_id] -= gbp
 
-    # A true calendar window ending at the latest month with data — not "the
-    # last N keys that happen to contain data", which lets stray old months in.
-    all_keys = sorted(by_month)
-    if all_keys:
-        last_y, last_m = map(int, all_keys[-1].split("-"))
-        start_index = (last_y * 12 + (last_m - 1)) - (months - 1)
-        cutoff = f"{start_index // 12:04d}-{start_index % 12 + 1:02d}"
-        keys = [k for k in all_keys if k >= cutoff]
-    else:
-        keys = []
+    keys = _calendar_window(sorted(by_month), months)
     # Category totals honor the same window as the months list — never
     # all-time, or the ranked list disagrees with the monthly columns.
     category_totals: dict[int | None, Decimal] = defaultdict(Decimal)
@@ -171,16 +174,21 @@ def month_detail(db: Session, month: str) -> dict:
 
 def category_merchants(db: Session, category_id: int, months: int = 12) -> dict:
     """Top merchants within one category (id 0 = uncategorized) across the
-    last N months, GBP-converted, spending only."""
-    txs = [t for t in _spending_transactions(db) if t.amount < 0]
-    month_keys = sorted({t.date.strftime("%Y-%m") for t in txs})[-months:]
-    window = set(month_keys)
+    same calendar window as monthly_overview, GBP-converted, with refund
+    semantics: positive categorized amounts subtract from their merchant."""
+    txs = _spending_transactions(db)
+    income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    # Same window anchor as monthly_overview: latest month with any activity.
+    all_keys = sorted({t.date.strftime("%Y-%m") for t in txs})
+    window = set(_calendar_window(all_keys, months))
     wanted = None if category_id == 0 else category_id
 
     by_merchant: dict[str, dict] = defaultdict(lambda: {"total": Decimal(0), "count": 0})
     for tx in txs:
         if tx.category_id != wanted or tx.date.strftime("%Y-%m") not in window:
             continue
+        if tx.amount > 0 and _is_income(tx, income_id):
+            continue  # income, not a refund
         m = by_merchant[tx.merchant or tx.description]
         m["total"] += -to_gbp(tx.amount, tx.account.currency)
         m["count"] += 1
