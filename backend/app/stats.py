@@ -66,7 +66,6 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
     by_month: dict[str, dict] = defaultdict(
         lambda: {"spending": Decimal(0), "income": Decimal(0), "by_category": defaultdict(Decimal)}
     )
-    category_totals: dict[int | None, Decimal] = defaultdict(Decimal)
 
     for tx in txs:
         gbp = to_gbp(tx.amount, tx.account.currency)
@@ -75,7 +74,6 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
         if gbp < 0:
             bucket["spending"] += -gbp
             bucket["by_category"][tx.category_id] += -gbp
-            category_totals[tx.category_id] += -gbp
         elif _is_income(tx, income_id):
             bucket["income"] += gbp
         else:
@@ -84,9 +82,23 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
             # as income.
             bucket["spending"] -= gbp
             bucket["by_category"][tx.category_id] -= gbp
-            category_totals[tx.category_id] -= gbp
 
-    keys = sorted(by_month)[-months:]
+    # A true calendar window ending at the latest month with data — not "the
+    # last N keys that happen to contain data", which lets stray old months in.
+    all_keys = sorted(by_month)
+    if all_keys:
+        last_y, last_m = map(int, all_keys[-1].split("-"))
+        start_index = (last_y * 12 + (last_m - 1)) - (months - 1)
+        cutoff = f"{start_index // 12:04d}-{start_index % 12 + 1:02d}"
+        keys = [k for k in all_keys if k >= cutoff]
+    else:
+        keys = []
+    # Category totals honor the same window as the months list — never
+    # all-time, or the ranked list disagrees with the monthly columns.
+    category_totals: dict[int | None, Decimal] = defaultdict(Decimal)
+    for k in keys:
+        for cid, v in by_month[k]["by_category"].items():
+            category_totals[cid] += v
     return {
         "months": [
             {

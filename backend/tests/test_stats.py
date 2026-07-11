@@ -90,3 +90,14 @@ def test_recurring_flags_price_change():
     db.commit()
     (sub,) = recurring(db)
     assert sub["price_change"] > 0
+
+
+def test_category_totals_respect_window():
+    db, gbp, _, groceries, _ = make_db()
+    add(db, gbp, date(2020, 1, 5), "OLD TESCO", "-500.00", cat=groceries.id)
+    for month in (5, 6):
+        add(db, gbp, date(2026, month, 5), "TESCO", "-10.00", cat=groceries.id)
+    db.commit()
+    data = monthly_overview(db, months=12)
+    (cat,) = [c for c in data["categories"] if c["name"] == "Groceries"]
+    assert cat["total"] == 20.0  # the 2020 transaction is outside the window
