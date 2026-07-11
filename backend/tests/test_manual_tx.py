@@ -1,13 +1,20 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import app.main as main
 from app.db import Base
 
 
 def make_client(monkeypatch):
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # StaticPool: a plain :memory: engine gives every pooled connection its
+    # own empty database.
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     maker = sessionmaker(bind=engine)
 
