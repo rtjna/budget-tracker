@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
@@ -31,6 +32,15 @@ with SessionLocal() as _db:
     _db.commit()
 
 app = FastAPI(title="Budget Tracker")
+
+# Single-user app served on loopback only. Rejecting other Host headers
+# mitigates DNS rebinding, where a hostile page resolves its own hostname to
+# 127.0.0.1 to reach this API from a browser. If you deliberately expose the
+# app behind a reverse proxy, add its hostname here.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["localhost", "127.0.0.1"],
+)
 
 app.add_middleware(
     CORSMiddleware,

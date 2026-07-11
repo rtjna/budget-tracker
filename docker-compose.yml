@@ -2,7 +2,12 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      # Bind to loopback only: the API has no authentication, so it must not
+      # be reachable from the network. To expose it deliberately, put an
+      # authenticating reverse proxy (or a VPN like Tailscale/WireGuard) in
+      # front and change this to "8000:8000" — and extend the allowed hosts
+      # in backend/app/main.py (TrustedHostMiddleware) to match.
+      - "127.0.0.1:8000:8000"
     volumes:
       - ${DATA_DIR:-~/FinanceData}:/app/data
     restart: unless-stopped

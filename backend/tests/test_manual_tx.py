@@ -26,7 +26,8 @@ def make_client(monkeypatch):
             db.close()
 
     main.app.dependency_overrides[main.get_db] = get_db
-    return TestClient(main.app)
+    # base_url: TrustedHostMiddleware only allows localhost/127.0.0.1.
+    return TestClient(main.app, base_url="http://localhost")
 
 
 def test_manual_create_and_delete(monkeypatch):
