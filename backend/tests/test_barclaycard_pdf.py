@@ -5,6 +5,7 @@ import pytest
 from app.importers.barclaycard_pdf import (
     _amount_from,
     _month_from_tail,
+    _parse,
     _validate,
     decode_co,
     decode_row,
@@ -12,6 +13,8 @@ from app.importers.barclaycard_pdf import (
 from app.importers.barclays_pdf import StatementDecodeError
 from app.importers.base import ParsedRow
 from datetime import date
+
+from tests.synthetic_statements import barclaycard_pages
 
 
 def test_row_cipher_decodes_known_strings():
@@ -50,3 +53,15 @@ def test_validation_rejects_unbalanced():
     }
     with pytest.raises(StatementDecodeError, match="reconcile"):
         _validate(rows, {"in": Decimal("2200"), "out": Decimal(0)}, anchors)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_autoderives_rescrambled_statement(seed):
+    """Both fonts self-calibrate on a re-scrambled document: Co digits from the
+    balance identity (disambiguated by the row sums), Tahoma digits from the
+    section totals. Reconciliation confirms the whole decode."""
+    rows = _parse(barclaycard_pages(seed))
+    assert sorted(r.amount for r in rows) == [
+        Decimal("-1750.00"), Decimal("-10.00"), Decimal("2000.00")
+    ]
+    assert all(r.date == date(2026, 6, d) for r, d in zip(rows, (15, 10, 12)))
