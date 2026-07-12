@@ -205,17 +205,23 @@ def sync(db: Session) -> dict:
                     "expand[]": "merchant",
                 },
             )
-            if response.status_code == 403 and since == HISTORY_START:
-                # SCA window closed: only the last 90 days are available.
+            if response.status_code in (400, 403) and since == HISTORY_START:
+                # Outside the post-approval SCA window Monzo refuses history
+                # older than 90 days (observed as 400 or 403 depending on
+                # endpoint mood). Fall back to the permitted window.
                 stats["window_limited"] = True
                 since = (datetime.now(timezone.utc) - timedelta(days=SCA_WINDOW_DAYS)).strftime(
                     "%Y-%m-%dT%H:%M:%SZ"
                 )
                 continue
-            if response.status_code == 403:
+            if response.status_code in (400, 403):
+                try:
+                    detail = response.json().get("message") or response.json().get("code", "")
+                except Exception:
+                    detail = response.text[:200]
                 raise MonzoError(
                     "Monzo refused transaction access — approve access in the Monzo app "
-                    "and sync again (within 5 minutes for full history)."
+                    f"and sync again (within 5 minutes for full history). Monzo said: {detail}"
                 )
             response.raise_for_status()
             page = response.json()["transactions"]
