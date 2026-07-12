@@ -151,13 +151,78 @@ def unmapped_glyphs(words: Iterable[str], glyph_map: dict[str, str]) -> set[str]
     return seen - glyph_map.keys()
 
 
+def resolve_separators(tokens: Iterable[str], glyph_map: dict[str, str]) -> None:
+    """Add the decimal-point and thousands-comma glyphs to ``glyph_map`` from the
+    structure of amount tokens (e.g. "£1,234.56"), so they are not later
+    mistaken for digits.
+
+    The pence separator is the glyph three places from the right whenever the two
+    trailing characters are digit-or-unmapped; the thousands comma is the glyph
+    four places to the left of the decimal. Both are decided by majority vote and
+    added only if that character role is still unassigned.
+    """
+    from collections import Counter
+
+    def digit_or_unknown(ch: str) -> bool:
+        return ch not in glyph_map or glyph_map[ch].isdigit()
+
+    tokens = list(tokens)
+    dec_votes: Counter = Counter()
+    for t in tokens:
+        if len(t) >= 3 and digit_or_unknown(t[-1]) and digit_or_unknown(t[-2]):
+            g = t[-3]
+            if g not in glyph_map and not g.isspace():
+                dec_votes[g] += 1
+    if not dec_votes:
+        return
+    decimal = dec_votes.most_common(1)[0][0]
+    if "." not in glyph_map.values():
+        glyph_map[decimal] = "."
+
+    # Thousands comma: four places left of the decimal, but only when a digit
+    # actually precedes it (>= 5 chars before the point), so a 3-digit amount's
+    # leading currency glyph is not mistaken for a comma.
+    com_votes: Counter = Counter()
+    for t in tokens:
+        p = t.rfind(decimal)
+        if p >= 5:
+            g = t[p - 4]
+            if g not in glyph_map and all(digit_or_unknown(x) for x in t[:p] if x != g):
+                com_votes[g] += 1
+    if com_votes:
+        comma = com_votes.most_common(1)[0][0]
+        if "," not in glyph_map.values() and comma not in glyph_map:
+            glyph_map[comma] = ","
+
+    # Currency glyph: an unmapped glyph that only ever appears as the first
+    # character of an amount token (digits also appear in interior positions).
+    leading: set[str] = set()
+    interior: set[str] = set()
+    for t in tokens:
+        for i, ch in enumerate(t):
+            if ch in glyph_map or ch.isspace():
+                continue
+            (leading if i == 0 else interior).add(ch)
+    for g in leading - interior:
+        if "£" not in glyph_map.values():
+            glyph_map[g] = "£"
+            break
+
+
+def _perm_count(n: int, k: int) -> int:
+    total = 1
+    for i in range(k):
+        total *= n - i
+    return total
+
+
 def solve_numeric(
     base_map: dict[str, str],
     unknown_glyphs: Sequence[str],
     reconcile: Callable[[dict[str, str]], bool],
     *,
     digits: str = "0123456789",
-    max_unknown: int = 7,
+    max_perms: int = 50_000,
 ) -> dict[str, str] | None:
     """Complete digit glyphs the anchors missed, using arithmetic as the oracle.
 
@@ -167,22 +232,55 @@ def solve_numeric(
     balance check) selects the assignment that makes the statement add up.
 
     Returns the completed map, or ``None`` if nothing reconciles. Raises when the
-    search space is too large to trust -- a statement with too few numeric
-    anchors is refused loudly rather than guessed.
+    remaining search space is too large to trust -- a statement with too few
+    numeric anchors is refused loudly rather than guessed at.
     """
     if not unknown_glyphs:
         return base_map if reconcile(base_map) else None
-    if len(unknown_glyphs) > max_unknown:
-        raise StatementDecodeError(
-            f"too few numeric anchors: {len(unknown_glyphs)} digit glyphs "
-            "undetermined, cannot solve reliably"
-        )
     used = {c for c in base_map.values() if c in digits}
     free = [d for d in digits if d not in used]
     if len(free) < len(unknown_glyphs):
         return None
+    if _perm_count(len(free), len(unknown_glyphs)) > max_perms:
+        raise StatementDecodeError(
+            f"too few numeric anchors: {len(unknown_glyphs)} digit glyphs "
+            f"undetermined against {len(free)} free digits, cannot solve reliably"
+        )
     for combo in permutations(free, len(unknown_glyphs)):
         trial = dict(base_map, **dict(zip(unknown_glyphs, combo)))
         if reconcile(trial):
             return trial
     return None
+
+
+def iter_numeric_maps(
+    base_map: dict[str, str],
+    unknown_glyphs: Sequence[str],
+    accept: Callable[[dict[str, str]], bool],
+    *,
+    digits: str = "0123456789",
+    max_perms: int = 50_000,
+):
+    """Yield every digit-completion of ``base_map`` that ``accept`` approves.
+
+    Used when a single arithmetic constraint (e.g. a balance identity) leaves the
+    digit glyphs ambiguous, so the caller can disambiguate each candidate against
+    a further constraint (e.g. the transaction-row sums).
+    """
+    if not unknown_glyphs:
+        if accept(base_map):
+            yield base_map
+        return
+    used = {c for c in base_map.values() if c in digits}
+    free = [d for d in digits if d not in used]
+    if len(free) < len(unknown_glyphs):
+        return
+    if _perm_count(len(free), len(unknown_glyphs)) > max_perms:
+        raise StatementDecodeError(
+            f"too few numeric anchors: {len(unknown_glyphs)} digit glyphs "
+            f"undetermined against {len(free)} free digits, cannot solve reliably"
+        )
+    for combo in permutations(free, len(unknown_glyphs)):
+        trial = dict(base_map, **dict(zip(unknown_glyphs, combo)))
+        if accept(trial):
+            yield trial
