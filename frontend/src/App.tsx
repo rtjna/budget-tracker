@@ -108,6 +108,7 @@ export default function App() {
   const [imports, setImports] = useState<ImportResult[]>([])
   const [dragging, setDragging] = useState(false)
   const [transferMsg, setTransferMsg] = useState('')
+  const [monzoUrl, setMonzoUrl] = useState('')
   const [showAdd, setShowAdd] = useState(false)
 
   async function detectTransfers() {
@@ -127,12 +128,13 @@ export default function App() {
         setTransferMsg(connData.detail ?? 'Monzo is not configured')
         return
       }
-      window.open(connData.url, '_blank')
+      setMonzoUrl(connData.url)
       setTransferMsg(
-        'Monzo consent page opened — authorise there, approve in the Monzo app, then press Sync Monzo again (within 5 minutes for full history).',
+        'Monzo needs authorising — use the link below, approve in the Monzo app, then press Sync Monzo again (within 5 minutes for full history).',
       )
       return
     }
+    setMonzoUrl('')
     if (!res.ok) {
       setTransferMsg(data.detail ?? 'Monzo sync failed')
       return
@@ -381,7 +383,19 @@ export default function App() {
               {showAdd ? '× Close' : '+ Add transaction'}
             </button>
           </section>
-          {transferMsg && <p className="review-intro">{transferMsg}</p>}
+          {transferMsg && (
+            <p className="review-intro">
+              {transferMsg}
+              {monzoUrl && (
+                <>
+                  {' '}
+                  <a href={monzoUrl} target="_blank" rel="noreferrer">
+                    → Authorise with Monzo
+                  </a>
+                </>
+              )}
+            </p>
+          )}
           {showAdd && (
             <AddTransaction
               accounts={accounts}
