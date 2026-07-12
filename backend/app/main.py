@@ -168,28 +168,39 @@ async def create_import(file: UploadFile, db: Session = Depends(get_db)):
     data = await file.read()
     try:
         if data[:5] == b"%PDF-":
-            from .importers.barclays_pdf import StatementDecodeError, parse_pdf
+            from .importers import barclaycard_pdf, barclays_pdf
             from .importing import import_rows
 
-            try:
-                rows = parse_pdf(data)
-            except StatementDecodeError as e:
-                raise HTTPException(status_code=422, detail=str(e))
-            except Exception:
-                # pdfplumber/pdfminer raise a zoo of exceptions on corrupt,
-                # truncated or password-protected PDFs.
+            rows = None
+            source = account = provider = kind = ""
+            errors: list[str] = []
+            for module, src, acct, prov, knd in (
+                (barclays_pdf, "barclays_pdf", "Barclays", "barclays", "current"),
+                (barclaycard_pdf, "barclaycard_pdf", "Barclaycard", "barclaycard", "credit"),
+            ):
+                try:
+                    rows = module.parse_pdf(data)
+                    source, account, provider, kind = src, acct, prov, knd
+                    break
+                except barclays_pdf.StatementDecodeError as e:
+                    errors.append(f"{acct}: {e}")
+                except Exception:
+                    # pdfplumber/pdfminer raise a zoo of exceptions on corrupt,
+                    # truncated or password-protected PDFs.
+                    errors.append(f"{acct}: unreadable PDF (corrupt or password-protected?)")
+            if rows is None:
                 raise HTTPException(
                     status_code=422,
-                    detail="Could not read this PDF — it appears to be corrupt or password-protected",
+                    detail="Could not parse this PDF as a bank statement — " + " / ".join(errors),
                 )
             batch = import_rows(
                 db,
-                source="barclays_pdf",
+                source=source,
                 filename=file.filename or "statement.pdf",
                 rows=rows,
-                provider="barclays",
-                kind="current",
-                default_account_name="Barclays",
+                provider=provider,
+                kind=kind,
+                default_account_name=account,
             )
         else:
             if is_xlsx(data):
