@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import Coverage from './Coverage'
 import Dashboard from './Dashboard'
 import './App.css'
 
@@ -93,7 +94,7 @@ function CategorySelect({
 }
 
 export default function App() {
-  const [tab, setTab] = useState<'dashboard' | 'transactions' | 'review'>('dashboard')
+  const [tab, setTab] = useState<'dashboard' | 'transactions' | 'review' | 'coverage'>('dashboard')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [txs, setTxs] = useState<Tx[]>([])
@@ -321,9 +322,14 @@ export default function App() {
         <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>
           Review{reviewTotal > 0 ? ` (${reviewTotal})` : ''}
         </button>
+        <button className={tab === 'coverage' ? 'active' : ''} onClick={() => setTab('coverage')}>
+          Coverage
+        </button>
       </nav>
 
       {tab === 'dashboard' && <Dashboard />}
+
+      {tab === 'coverage' && <Coverage />}
 
       {tab === 'transactions' && (
         <>

@@ -13,7 +13,7 @@ from statistics import median
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Category, Transaction
+from .models import Account, Category, Transaction
 
 # Approximate GBP conversion rates (mid-2026). Update occasionally by hand.
 GBP_RATES = {
@@ -169,6 +169,52 @@ def month_detail(db: Session, month: str) -> dict:
             ),
             key=lambda x: -x["total"],
         )[:15],
+    }
+
+
+def coverage(db: Session) -> dict:
+    """Which accounts have data in which months — every transaction counts,
+    transfers included, because this is about data presence, not spending."""
+    from sqlalchemy import func
+
+    rows = db.execute(
+        select(
+            Transaction.account_id,
+            func.strftime("%Y-%m", Transaction.date).label("month"),
+            func.count(Transaction.id),
+            func.max(Transaction.date),
+        ).group_by(Transaction.account_id, "month")
+    ).all()
+
+    accounts = {a.id: a for a in db.scalars(select(Account))}
+    by_account: dict[int, dict] = {}
+    all_months: set[str] = set()
+    for account_id, month, count, latest in rows:
+        entry = by_account.setdefault(
+            account_id, {"months": {}, "latest": None}
+        )
+        entry["months"][month] = count
+        entry["latest"] = max(entry["latest"] or latest, latest)
+        all_months.add(month)
+
+    return {
+        "months": sorted(all_months),
+        "accounts": sorted(
+            (
+                {
+                    "id": account_id,
+                    "name": accounts[account_id].name,
+                    "provider": accounts[account_id].provider,
+                    "kind": accounts[account_id].kind,
+                    "latest": str(entry["latest"]),
+                    "total": sum(entry["months"].values()),
+                    "months": entry["months"],
+                }
+                for account_id, entry in by_account.items()
+                if account_id in accounts
+            ),
+            key=lambda a: a["name"],
+        ),
     }
 
 

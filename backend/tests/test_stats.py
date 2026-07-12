@@ -136,3 +136,25 @@ def test_category_merchants_refunds_subtract():
     # Uncategorized view (id 0) must not list the salary as spending.
     uncat = category_merchants(db, 0, months=12)
     assert all(m["merchant"] != "SALARY" for m in uncat["merchants"])
+
+
+def test_coverage_counts_by_account_and_month():
+    db, gbp, jpy, groceries, _ = make_db()
+    add(db, gbp, date(2026, 5, 5), "TESCO", "-10.00", cat=groceries.id)
+    add(db, gbp, date(2026, 5, 9), "TESCO", "-5.00", cat=groceries.id)
+    add(db, jpy, date(2026, 6, 1), "RAMEN", "-2000")
+    # transfers still count as data presence
+    t = add(db, gbp, date(2026, 6, 2), "EXCHANGE", "-50.00")
+    t.transfer_peer_id = t.id
+    db.commit()
+
+    from app.stats import coverage
+
+    data = coverage(db)
+    assert data["months"] == ["2026-05", "2026-06"]
+    amex = next(a for a in data["accounts"] if a["name"] == "Amex")
+    assert amex["months"] == {"2026-05": 2, "2026-06": 1}
+    assert amex["total"] == 3
+    assert amex["latest"] == "2026-06-02"
+    revolut_jpy = next(a for a in data["accounts"] if a["name"] == "Revolut JPY")
+    assert revolut_jpy["months"] == {"2026-06": 1}

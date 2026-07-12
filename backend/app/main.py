@@ -297,6 +297,13 @@ def stats_category_merchants(
     return category_merchants(db, category_id, months=months)
 
 
+@app.get("/api/stats/coverage")
+def stats_coverage(db: Session = Depends(get_db)):
+    from .stats import coverage
+
+    return coverage(db)
+
+
 @app.get("/api/stats/recurring")
 def stats_recurring(db: Session = Depends(get_db)):
     from .stats import recurring

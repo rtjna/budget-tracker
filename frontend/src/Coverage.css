@@ -1,0 +1,78 @@
+.coverage-scroll {
+  overflow-x: auto;
+}
+
+.coverage-grid {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  width: 100%;
+}
+
+.coverage-grid th {
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--gridline);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.coverage-grid td {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--gridline);
+  color: var(--text-secondary);
+}
+
+.coverage-account {
+  position: sticky;
+  left: 0;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  white-space: nowrap;
+  padding-right: 0.8rem;
+}
+
+.coverage-kind {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.coverage-month {
+  text-align: center;
+}
+
+.coverage-cell {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.4rem;
+  border-left: 2px solid var(--surface-1); /* surface gap between cells */
+}
+
+/* Sequential blue ramp (reference palette): more transactions = darker in
+   light mode. Each bucket carries its own readable ink. */
+.bucket-1 { background: #cde2fb; color: #0b0b0b; }
+.bucket-2 { background: #9ec5f4; color: #0b0b0b; }
+.bucket-3 { background: #5598e7; color: #ffffff; }
+.bucket-4 { background: #1c5cab; color: #ffffff; }
+
+@media (prefers-color-scheme: dark) {
+  /* Dark mode: same hue, stepped for the dark surface — low counts recede
+     toward the surface, high counts glow lighter. */
+  .bucket-1 { background: #10315c; color: #c3c2b7; }
+  .bucket-2 { background: #1c5cab; color: #ffffff; }
+  .bucket-3 { background: #3987e5; color: #0b0b0b; }
+  .bucket-4 { background: #9ec5f4; color: #0b0b0b; }
+}
+
+.coverage-empty {
+  color: var(--text-muted);
+}
+
+.coverage-latest {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.coverage-note {
+  margin: 0.6rem 0 0.2rem;
+}
