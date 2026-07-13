@@ -6,6 +6,7 @@ type MonthRow = {
   month: string
   spending: number
   income: number
+  invested: number
   net: number
   by_category: Record<string, number>
 }
@@ -152,7 +153,8 @@ export default function Dashboard() {
           </select>
         </label>
         <span className="dash-note">
-          Foreign-currency accounts converted at approximate rates · transfers excluded
+          Foreign-currency accounts converted at approximate rates · transfers excluded · investing
+          tracked separately, not as spending
         </span>
       </div>
 
@@ -169,6 +171,12 @@ export default function Dashboard() {
           delta={prev ? current.income - prev.income : null}
         />
         <StatTile label="Net" value={gbp(current.net)} delta={prev ? current.net - prev.net : null} />
+        <StatTile
+          label="Net invested"
+          value={gbp(current.invested)}
+          delta={prev ? current.invested - prev.invested : null}
+          tip="Money moved into investments minus money taken out this month. Asset movements, so not counted in spending or income."
+        />
         <StatTile
           label="Subscriptions / month"
           value={gbp(subsMonthly)}
@@ -491,16 +499,18 @@ function StatTile({
   delta,
   sub,
   downIsGood = false,
+  tip,
 }: {
   label: string
   value: string
   delta?: number | null
   sub?: string
   downIsGood?: boolean
+  tip?: string
 }) {
   const good = delta != null && (downIsGood ? delta < 0 : delta > 0)
   return (
-    <div className="stat-tile">
+    <div className="stat-tile" data-tip={tip}>
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
       {delta != null && Math.abs(delta) >= 1 && (
@@ -819,6 +829,12 @@ function IncomeSpending({
               <span className="tt-value">{gbp(hovered.net)}</span>
               <span className="tt-label">net</span>
             </div>
+            {hovered.invested !== 0 && (
+              <div className="tt-row">
+                <span className="tt-value">{gbp(hovered.invested)}</span>
+                <span className="tt-label">invested</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -829,6 +845,7 @@ function IncomeSpending({
             <th className="num">Income</th>
             <th className="num">Spending</th>
             <th className="num">Net</th>
+            <th className="num">Invested</th>
           </tr>
         </thead>
         <tbody>
@@ -838,6 +855,7 @@ function IncomeSpending({
               <td className="num">{gbp(m.income)}</td>
               <td className="num">{gbp(m.spending)}</td>
               <td className="num">{gbp(m.net)}</td>
+              <td className="num">{gbp(m.invested)}</td>
             </tr>
           ))}
         </tbody>

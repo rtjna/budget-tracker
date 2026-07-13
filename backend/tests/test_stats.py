@@ -158,3 +158,39 @@ def test_coverage_counts_by_account_and_month():
     assert amex["latest"] == "2026-06-02"
     revolut_jpy = next(a for a in data["accounts"] if a["name"] == "Revolut JPY")
     assert revolut_jpy["months"] == {"2026-06": 1}
+
+
+def test_investing_excluded_from_spending_and_income_but_reported():
+    db, gbp, _, groceries, _ = make_db()
+    investing = Category(name="Investing")
+    db.add(investing)
+    db.flush()
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-10.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 10), "VANGUARD DD", "-1000.00", cat=investing.id)
+    add(db, gbp, date(2026, 6, 20), "VANGUARD SELL", "400.00", cat=investing.id)
+    add(db, gbp, date(2026, 6, 28), "SALARY", "3000.00")
+    db.commit()
+
+    data = monthly_overview(db)
+    (june,) = [m for m in data["months"] if m["month"] == "2026-06"]
+    assert june["spending"] == 10.0  # the Vanguard buy is not spending
+    assert june["income"] == 3000.0  # the Vanguard sell is not income
+    assert june["invested"] == 600.0  # net: £1000 in, £400 back out
+    assert all(c["name"] != "Investing" for c in data["categories"])
+    detail = month_detail(db, "2026-06")
+    assert all(c["name"] != "Investing" for c in detail["categories"])
+
+
+def test_investing_only_month_still_appears():
+    db, gbp, _, groceries, _ = make_db()
+    investing = Category(name="Investing")
+    db.add(investing)
+    db.flush()
+    add(db, gbp, date(2026, 5, 5), "TESCO", "-10.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 10), "VANGUARD DD", "-500.00", cat=investing.id)
+    db.commit()
+
+    data = monthly_overview(db)
+    by_month = {m["month"]: m for m in data["months"]}
+    assert by_month["2026-06"]["invested"] == 500.0
+    assert by_month["2026-06"]["spending"] == 0.0

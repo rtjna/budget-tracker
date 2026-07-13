@@ -26,6 +26,10 @@ GBP_RATES = {
 }
 
 TRANSFER_CATEGORY = "Transfers"
+# Asset movements, not consumption: buys aren't spending and sells aren't
+# income. Excluded from every spending/income aggregate and reported as a
+# separate net-invested series instead.
+INVESTING_CATEGORY = "Investing"
 
 
 def _is_income(tx, income_id) -> bool:
@@ -43,19 +47,44 @@ def to_gbp(amount: Decimal, currency: str) -> Decimal:
 
 
 def _spending_transactions(db: Session) -> list[Transaction]:
-    """All transactions that count as real money movement: transfer pairs and
-    the Transfers category excluded."""
-    transfers_id = db.scalar(select(Category.id).where(Category.name == TRANSFER_CATEGORY))
+    """All transactions that count as consumption or income: transfer pairs,
+    the Transfers category, and the Investing category (asset movements)
+    excluded."""
+    excluded_ids = list(
+        db.scalars(
+            select(Category.id).where(Category.name.in_((TRANSFER_CATEGORY, INVESTING_CATEGORY)))
+        )
+    )
     query = (
         select(Transaction)
         .options(joinedload(Transaction.account))
         .where(Transaction.transfer_peer_id.is_(None))
     )
-    if transfers_id is not None:
+    if excluded_ids:
         query = query.where(
-            (Transaction.category_id != transfers_id) | (Transaction.category_id.is_(None))
+            Transaction.category_id.not_in(excluded_ids) | Transaction.category_id.is_(None)
         )
     return list(db.scalars(query))
+
+
+def _invested_by_month(db: Session) -> dict[str, Decimal]:
+    """Net invested per month: Investing outflows minus inflows (a sell that
+    returns money reduces the month's net investment), GBP-converted."""
+    investing_id = db.scalar(select(Category.id).where(Category.name == INVESTING_CATEGORY))
+    invested: dict[str, Decimal] = defaultdict(Decimal)
+    if investing_id is None:
+        return invested
+    txs = db.scalars(
+        select(Transaction)
+        .options(joinedload(Transaction.account))
+        .where(
+            Transaction.category_id == investing_id,
+            Transaction.transfer_peer_id.is_(None),
+        )
+    )
+    for tx in txs:
+        invested[tx.date.strftime("%Y-%m")] += -to_gbp(tx.amount, tx.account.currency)
+    return invested
 
 
 def _calendar_window(all_keys: list[str], months: int) -> list[str]:
@@ -95,6 +124,10 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
             bucket["spending"] -= gbp
             bucket["by_category"][tx.category_id] -= gbp
 
+    invested = _invested_by_month(db)
+    for month in invested:
+        by_month[month]  # a month with only investing activity still appears
+
     keys = _calendar_window(sorted(by_month), months)
     # Category totals honor the same window as the months list — never
     # all-time, or the ranked list disagrees with the monthly columns.
@@ -108,6 +141,7 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
                 "month": m,
                 "spending": float(by_month[m]["spending"]),
                 "income": float(by_month[m]["income"]),
+                "invested": float(invested.get(m, 0)),
                 "net": float(by_month[m]["income"] - by_month[m]["spending"]),
                 "by_category": {
                     str(cid if cid is not None else 0): float(v)
