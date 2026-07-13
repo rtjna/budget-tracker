@@ -69,6 +69,14 @@ def _check_cross_format_overlap(
 
 
 def fingerprint(account_id: int, row: ParsedRow, ordinal: int) -> str:
+    # Known trade-off (audit M5): the ordinal is positional within one file,
+    # so a *new* transaction identical in (date, description, amount) to one
+    # already imported from an earlier file collides and is dropped as a
+    # duplicate. Bank exports carry no stable row IDs, so that case is
+    # indistinguishable from re-exporting the same transaction — and for a
+    # spending tracker, double-counting on every overlapping re-export would
+    # be the worse failure. Files containing BOTH occurrences dedup correctly
+    # via ordinals.
     key = f"{account_id}|{row.date.isoformat()}|{row.amount}|{row.description.lower()}|{ordinal}"
     return hashlib.sha256(key.encode()).hexdigest()
 

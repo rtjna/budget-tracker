@@ -171,3 +171,16 @@ def test_audit_resolve_marks_human():
         json={"transaction_ids": [tx["id"]], "category_id": 424242},
     )
     assert resp.status_code == 422
+
+
+def test_duplicate_category_and_rule_return_409_not_500():
+    client = make_client()
+    cid = _create_category(client, "Twice")
+    resp = client.post("/api/categories", json={"name": "Twice"})
+    assert resp.status_code == 409
+    assert "already exists" in resp.json()["detail"]
+
+    body = {"pattern": "TWICE", "match": "contains", "category_id": cid}
+    assert client.post("/api/rules", json=body).status_code == 200
+    resp = client.post("/api/rules", json=body)
+    assert resp.status_code == 409

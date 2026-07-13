@@ -8,6 +8,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import models
@@ -554,9 +555,23 @@ def list_categories(db: Session = Depends(get_db)):
 
 @app.post("/api/categories")
 def create_category(body: CategoryBody, db: Session = Depends(get_db)):
-    category = models.Category(name=body.name.strip(), parent_id=body.parent_id)
+    name = body.name.strip()
+    # Explicit duplicate check: the (name, parent_id) unique constraint does
+    # not catch top-level duplicates because SQLite treats NULLs as distinct.
+    parent_matches = (
+        models.Category.parent_id.is_(None)
+        if body.parent_id is None
+        else models.Category.parent_id == body.parent_id
+    )
+    if db.scalar(select(models.Category).where(models.Category.name == name, parent_matches)):
+        raise HTTPException(status_code=409, detail=f"Category {name!r} already exists")
+    category = models.Category(name=name, parent_id=body.parent_id)
     db.add(category)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"Category {name!r} already exists")
     return {"id": category.id, "name": category.name, "parent_id": category.parent_id}
 
 
@@ -631,7 +646,13 @@ def create_rule(body: RuleBody, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="match must be contains, merchant, or regex")
     rule = models.Rule(match=body.match, pattern=body.pattern.strip(), category_id=body.category_id)
     db.add(rule)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f"A {body.match} rule for {body.pattern.strip()!r} already exists"
+        )
     uncategorized = list(
         db.scalars(select(models.Transaction).where(models.Transaction.category_id.is_(None)))
     )

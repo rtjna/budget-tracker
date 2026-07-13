@@ -199,3 +199,28 @@ def test_barclays_single_account_export_keeps_plain_name():
     import_file(db, "b.csv", BARCLAYS_CSV)
     accounts = {t.account.name for t in db.scalars(select(Transaction))}
     assert accounts == {"Barclays"}
+
+
+def test_identical_row_in_later_file_treated_as_duplicate_by_design():
+    """Audit M5, intended semantics: bank exports carry no row IDs, so a lone
+    (date, description, amount) match across files is treated as the same
+    transaction (dedup wins over double-count). A file containing both
+    occurrences imports both via ordinals."""
+    from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db import Base
+    from app.importing import import_file
+    from app.models import Transaction
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    two = "Date,Description,Amount\n01/07/2026,COFFEE,3.00\n01/07/2026,COFFEE,3.00\n"
+    batch = import_file(db, "a.csv", two)
+    assert batch.new_count == 2  # same-day identical rows in ONE file both land
+
+    again = import_file(db, "b.csv", "Date,Description,Amount\n01/07/2026,COFFEE,3.00\n")
+    assert again.new_count == 0 and again.duplicate_count == 1  # by design
+    assert db.scalar(select(func.count()).select_from(Transaction)) == 2
