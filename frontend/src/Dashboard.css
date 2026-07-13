@@ -366,3 +366,10 @@
 .price-down { color: var(--delta-good); font-size: 0.72rem; }
 
 .chart-table { margin-top: 0.25rem; overflow-x: auto; display: block; }
+
+/* The tooltip row for the segment currently under the pointer. */
+.tt-row.tt-active .tt-label,
+.tt-row.tt-active .tt-value {
+  font-weight: 700;
+  opacity: 1;
+}

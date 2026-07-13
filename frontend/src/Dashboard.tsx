@@ -562,6 +562,9 @@ function StackedColumns({
   onSelect: (m: string) => void
 }) {
   const [hover, setHover] = useState<string | null>(null)
+  // Which segment (category) the pointer is on, so the tooltip can say
+  // "this slice is X" instead of making the eye match colors to the legend.
+  const [hoverSeg, setHoverSeg] = useState<number | null>(null)
   const maxSpend = Math.max(...months.map((m) => m.spending))
   const ticks = niceTicks(maxSpend)
   const top = ticks[ticks.length - 1]
@@ -630,7 +633,10 @@ function StackedColumns({
                 key={m.month}
                 tabIndex={0}
                 onPointerEnter={() => setHover(m.month)}
-                onPointerLeave={() => setHover(null)}
+                onPointerLeave={() => {
+                  setHover(null)
+                  setHoverSeg(null)
+                }}
                 onFocus={() => setHover(m.month)}
                 onBlur={() => setHover(null)}
                 onClick={() => onSelect(m.month)}
@@ -643,6 +649,7 @@ function StackedColumns({
                   acc += seg.value
                   const isTop = si === segs.length - 1
                   const fill = segFill(seg.id)
+                  const active = hover === m.month && hoverSeg === seg.id
                   return (
                     <rect
                       key={seg.id}
@@ -653,7 +660,12 @@ function StackedColumns({
                       rx={isTop ? 4 : 0}
                       fill={fill}
                       opacity={hover && hover !== m.month ? 0.45 : 1}
-                    />
+                      stroke={active ? 'currentColor' : 'none'}
+                      strokeWidth={active ? 1.5 : 0}
+                      onPointerEnter={() => setHoverSeg(seg.id)}
+                    >
+                      <title>{`${segName(seg.id)}: ${gbp(seg.value)}`}</title>
+                    </rect>
                   )
                 })}
                 <text
@@ -675,7 +687,10 @@ function StackedColumns({
               .slice()
               .reverse()
               .map((seg) => (
-                <div key={seg.id} className="tt-row">
+                <div
+                  key={seg.id}
+                  className={`tt-row ${hoverSeg === seg.id ? 'tt-active' : ''}`}
+                >
                   <span className="tt-key" style={{ background: segFill(seg.id) }} />
                   <span className="tt-value">{gbp(seg.value)}</span>
                   <span className="tt-label">{segName(seg.id)}</span>
