@@ -171,3 +171,31 @@ def test_revolut_multicurrency_splits_accounts():
     }
     assert by_account["Revolut"][0] == "GBP"
     assert by_account["Revolut JPY"] == ("JPY", Decimal("-3000"))
+
+
+BARCLAYS_TWO_ACCOUNTS_CSV = """Number,Date,Account,Amount,Subcategory,Memo
+1,08/07/2026,20-04-15 38290008,-52.30,Payment,SAINSBURYS SMKT
+2,08/07/2026,20-04-15 55511122,-52.30,Payment,SAINSBURYS SMKT
+3,07/07/2026,20-04-15 38290008,"1,500.00",Credit,ACME LTD SALARY
+"""
+
+
+def test_barclays_multi_account_export_splits_accounts():
+    db = make_session()
+    batch = import_file(db, "b.csv", BARCLAYS_TWO_ACCOUNTS_CSV)
+    assert batch.new_count == 3
+
+    by_account = {}
+    for t in db.scalars(select(Transaction)):
+        by_account.setdefault(t.account.name, []).append(t)
+    assert set(by_account) == {"Barclays •0008", "Barclays •1122"}
+    # identical rows in different accounts are NOT deduplicated against each other
+    assert len(by_account["Barclays •0008"]) == 2
+    assert len(by_account["Barclays •1122"]) == 1
+
+
+def test_barclays_single_account_export_keeps_plain_name():
+    db = make_session()
+    import_file(db, "b.csv", BARCLAYS_CSV)
+    accounts = {t.account.name for t in db.scalars(select(Transaction))}
+    assert accounts == {"Barclays"}

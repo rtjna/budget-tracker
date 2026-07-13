@@ -31,15 +31,32 @@ class BarclaysImporter(BankImporter):
     def parse(self, text: str) -> list[ParsedRow]:
         reader = csv.reader(io.StringIO(text))
         next(reader, None)
-        rows: list[ParsedRow] = []
+        parsed: list[tuple[str, ParsedRow]] = []
         for raw in reader:
             if len(raw) < 6 or not raw[1].strip():
                 continue
-            rows.append(
-                ParsedRow(
-                    date=datetime.strptime(raw[1].strip(), "%d/%m/%Y").date(),
-                    description=normalize_whitespace(raw[5]),
-                    amount=Decimal(raw[3].replace(",", "").strip()),
+            parsed.append(
+                (
+                    raw[2].strip(),
+                    ParsedRow(
+                        date=datetime.strptime(raw[1].strip(), "%d/%m/%Y").date(),
+                        description=normalize_whitespace(raw[5]),
+                        amount=Decimal(raw[3].replace(",", "").strip()),
+                    ),
                 )
             )
-        return rows
+        # The Account column ("20-04-15 38290008") distinguishes accounts when
+        # an export contains several. A single-account file keeps the plain
+        # default name (matching data imported before this existed); with
+        # multiple accounts, each gets a stable, privacy-conscious suffix from
+        # the last four digits of its identifier.
+        identifiers = {ident for ident, _ in parsed if ident}
+        if len(identifiers) > 1:
+            for ident, row in parsed:
+                digits = re.sub(r"\D", "", ident)
+                row.account = (
+                    f"{self.default_account_name} •{digits[-4:]}"
+                    if digits
+                    else self.default_account_name
+                )
+        return [row for _, row in parsed]
