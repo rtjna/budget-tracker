@@ -543,9 +543,17 @@ export default function App() {
           </p>
           <div className="review-tools">
             <AddCategory onAdded={loadStatic} />
+            <ManageCategories
+              categories={categories}
+              onChanged={() => Promise.all([loadStatic(), loadTxs(), loadReview()])}
+            />
             <TrainModel onDone={() => Promise.all([loadTxs(), loadReview()])} />
             <AskClaude onDone={() => Promise.all([loadTxs(), loadReview()])} />
           </div>
+          <SecondOpinions
+            categories={categories}
+            onChanged={() => Promise.all([loadTxs(), loadReview()])}
+          />
           {review.map((g) => (
             <ReviewRow
               key={g.merchant}
@@ -765,6 +773,155 @@ function AskClaude({ onDone }: { onDone: () => void }) {
         {busy ? 'Asking Claude…' : '✨ Ask Claude'}
       </button>
       {result && <span className="review-meta">{result}</span>}
+    </div>
+  )
+}
+
+type AuditGroup = {
+  merchant: string
+  current_category_id: number
+  suggested_category_id: number
+  source: string
+  sample_description: string
+  transaction_ids: number[]
+  confidence: number
+}
+
+function SecondOpinions({
+  categories,
+  onChanged,
+}: {
+  categories: Category[]
+  onChanged: () => void
+}) {
+  const [groups, setGroups] = useState<AuditGroup[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const catName = (id: number) => categories.find((c) => c.id === id)?.name ?? '?'
+
+  async function scan() {
+    setBusy(true)
+    try {
+      const res = await api('/api/model/audit')
+      const data = await res.json()
+      setGroups(res.ok ? data.groups : [])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resolve(group: AuditGroup, categoryId: number) {
+    await api('/api/model/audit/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transaction_ids: group.transaction_ids, category_id: categoryId }),
+    })
+    setGroups((gs) => (gs ?? []).filter((g) => g !== group))
+    onChanged()
+  }
+
+  return (
+    <div className="second-opinions">
+      <button
+        onClick={scan}
+        disabled={busy}
+        data-tip="Have the local model re-check everything that was categorized automatically (by rules, the model itself, or Claude) and flag rows it confidently disagrees with. Your own labels are never questioned."
+      >
+        {busy ? 'Checking…' : '🔎 Second opinions'}
+      </button>
+      {groups !== null && (
+        <>
+          <span className="review-meta">
+            {groups.length === 0
+              ? 'The model agrees with every automatic categorization.'
+              : `${groups.length} merchants where the model disagrees — your call:`}
+          </span>
+          {groups.map((g) => (
+            <div className="review-row audit-row" key={`${g.merchant}|${g.suggested_category_id}`}>
+              <div className="review-merchant">
+                <strong>{g.merchant}</strong>
+                <span className="review-meta">
+                  {g.transaction_ids.length}× · currently “{catName(g.current_category_id)}” (
+                  {g.source}) · e.g. “{g.sample_description}”
+                </span>
+              </div>
+              <div className="review-actions">
+                <button
+                  onClick={() => resolve(g, g.suggested_category_id)}
+                  data-tip={`Recategorize these ${g.transaction_ids.length} as “${catName(g.suggested_category_id)}”`}
+                >
+                  → {catName(g.suggested_category_id)} ({Math.round(g.confidence * 100)}%)
+                </button>
+                <button
+                  onClick={() => resolve(g, g.current_category_id)}
+                  data-tip={`Keep “${catName(g.current_category_id)}” and never flag this again`}
+                >
+                  keep {catName(g.current_category_id)}
+                </button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ManageCategories({
+  categories,
+  onChanged,
+}: {
+  categories: Category[]
+  onChanged: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState('')
+
+  async function remove(c: Category) {
+    setError('')
+    let res = await api(`/api/categories/${c.id}`, { method: 'DELETE' })
+    if (res.status === 409) {
+      const data = await res.json()
+      const usage = (data.detail ?? '').replace('Category is used by ', '')
+      const warning =
+        `“${c.name}” is still in use: ${usage}.\n\n` +
+        'Delete anyway? Its transactions go back to the review queue, and its rules ' +
+        'and cached Claude answers are removed.'
+      if (!confirm(warning)) return
+      res = await api(`/api/categories/${c.id}?force=true`, { method: 'DELETE' })
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      setError(data?.detail ?? 'Delete failed')
+      return
+    }
+    onChanged()
+  }
+
+  return (
+    <div className="manage-categories">
+      <button
+        onClick={() => setOpen(!open)}
+        data-tip="Show all categories with the option to delete them"
+      >
+        {open ? '× Close' : '🗂 Manage categories'}
+      </button>
+      {open && (
+        <span className="category-chips">
+          {categories.map((c) => (
+            <span className="category-chip" key={c.id}>
+              {c.name}
+              <button
+                className="delete-btn"
+                onClick={() => remove(c)}
+                data-tip={`Delete “${c.name}”`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </span>
+      )}
+      {error && <span className="error">{error}</span>}
     </div>
   )
 }

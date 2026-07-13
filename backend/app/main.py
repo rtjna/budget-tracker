@@ -261,6 +261,58 @@ def train_model(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/model/audit")
+def model_audit(db: Session = Depends(get_db)):
+    """Second opinions: machine-categorized rows (rule/model/llm) where the
+    trained model confidently disagrees, grouped by merchant and change."""
+    from .ml import audit
+
+    groups: dict[tuple, dict] = {}
+    for tx, suggested, confidence in audit(db):
+        key = (tx.merchant, tx.category_id, suggested)
+        group = groups.setdefault(
+            key,
+            {
+                "merchant": tx.merchant,
+                "current_category_id": tx.category_id,
+                "suggested_category_id": suggested,
+                "source": tx.category_source,
+                "sample_description": tx.description,
+                "transaction_ids": [],
+                "confidence": 0.0,
+            },
+        )
+        group["transaction_ids"].append(tx.id)
+        group["confidence"] = max(group["confidence"], confidence)
+    return {
+        "groups": sorted(
+            groups.values(), key=lambda g: (-len(g["transaction_ids"]), -g["confidence"])
+        )
+    }
+
+
+class AuditResolveBody(BaseModel):
+    transaction_ids: list[int]
+    category_id: int
+
+
+@app.post("/api/model/audit/resolve")
+def model_audit_resolve(body: AuditResolveBody, db: Session = Depends(get_db)):
+    """Human verdict on a second opinion. Marks the rows as human-labeled
+    whether the suggestion was accepted or the current category kept, so the
+    decision feeds training and the group is never flagged again."""
+    if db.get(models.Category, body.category_id) is None:
+        raise HTTPException(status_code=422, detail="Unknown category")
+    txs = db.scalars(
+        select(models.Transaction).where(models.Transaction.id.in_(body.transaction_ids))
+    ).all()
+    for tx in txs:
+        tx.category_id = body.category_id
+        tx.category_source = "human"
+    db.commit()
+    return {"updated": len(txs)}
+
+
 @app.post("/api/transfers/detect")
 def run_transfer_detection(db: Session = Depends(get_db)):
     return {"pairs": detect_transfers(db)}
@@ -491,13 +543,14 @@ def create_category(body: CategoryBody, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/categories/{category_id}")
-def delete_category(category_id: int, db: Session = Depends(get_db)):
+def delete_category(category_id: int, force: bool = False, db: Session = Depends(get_db)):
     category = db.get(models.Category, category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
-    # Block deletion while anything still references the category; with
-    # SQLite FK enforcement on, deleting anyway would fail at commit time
-    # with an opaque IntegrityError.
+    # Without force, block deletion while anything still references the
+    # category; with SQLite FK enforcement on, deleting anyway would fail at
+    # commit time with an opaque IntegrityError. The 409 detail tells the
+    # frontend what force would unwind.
     references = [
         ("transactions", models.Transaction, models.Transaction.category_id),
         ("rules", models.Rule, models.Rule.category_id),
@@ -509,11 +562,30 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
         count = db.scalar(select(func.count()).select_from(model).where(column == category_id))
         if count:
             used_by.append(f"{count} {label}")
-    if used_by:
+    if used_by and not force:
         raise HTTPException(status_code=409, detail=f"Category is used by {', '.join(used_by)}")
+    if force:
+        # Transactions return to the review queue; rules and cached LLM
+        # answers for the category are dropped (so merchants can be re-asked);
+        # subcategories become top-level.
+        for tx in db.scalars(
+            select(models.Transaction).where(models.Transaction.category_id == category_id)
+        ):
+            tx.category_id = None
+            tx.category_source = None
+        for rule in db.scalars(select(models.Rule).where(models.Rule.category_id == category_id)):
+            db.delete(rule)
+        for entry in db.scalars(
+            select(models.LlmMerchantCache).where(models.LlmMerchantCache.category_id == category_id)
+        ):
+            db.delete(entry)
+        for child in db.scalars(
+            select(models.Category).where(models.Category.parent_id == category_id)
+        ):
+            child.parent_id = None
     db.delete(category)
     db.commit()
-    return {"deleted": category_id}
+    return {"deleted": category_id, "unwound": used_by}
 
 
 class RuleBody(BaseModel):

@@ -84,3 +84,31 @@ def test_model_never_trains_on_its_own_output(db):
     db.commit()
     texts, _ = ml._training_data(db)
     assert not any("MODEL LABELED" in t for t in texts)
+
+
+def test_audit_flags_only_confident_machine_label_disagreements(db):
+    acc, groceries, coffee = seed(db)
+    ml.train(db)
+    wrong_llm = Transaction(
+        account_id=acc.id, date=date(2026, 2, 1), description="TESCO STORE 7777 LEEDS",
+        merchant="TESCO STORE LEEDS", amount=Decimal("-9"), category_id=coffee.id,
+        category_source="llm", fingerprint="auditllm",
+    )
+    right_llm = Transaction(
+        account_id=acc.id, date=date(2026, 2, 2), description="TESCO STORE 8888 LEEDS",
+        merchant="TESCO STORE LEEDS", amount=Decimal("-9"), category_id=groceries.id,
+        category_source="llm", fingerprint="auditok",
+    )
+    wrong_human = Transaction(
+        account_id=acc.id, date=date(2026, 2, 3), description="TESCO STORE 9998 LEEDS",
+        merchant="TESCO STORE LEEDS", amount=Decimal("-9"), category_id=coffee.id,
+        category_source="human", fingerprint="audithuman",
+    )
+    db.add_all([wrong_llm, right_llm, wrong_human])
+    db.commit()
+
+    flagged = ml.audit(db)
+    assert [(t.id, suggested) for t, suggested, _ in flagged] == [(wrong_llm.id, groceries.id)]
+    assert all(conf >= ml.CONFIDENCE_THRESHOLD for _, _, conf in flagged)
+    # Audit only reports; nothing changed.
+    assert wrong_llm.category_id == coffee.id

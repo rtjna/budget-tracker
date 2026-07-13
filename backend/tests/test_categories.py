@@ -118,3 +118,56 @@ def test_delete_category_blocked_by_transactions_and_subcategory():
     tx_id = client.get("/api/transactions").json()["items"][0]["id"]
     assert client.delete(f"/api/transactions/{tx_id}").status_code == 200
     assert client.delete(f"/api/categories/{child}").status_code == 200
+
+
+# --- Force-delete: unwinds every reference instead of blocking ---
+
+
+def test_delete_category_force_unwinds_references():
+    client = make_client()
+    cid = _create_category(client, "Zombie")
+    child = client.post("/api/categories", json={"name": "Orphan", "parent_id": cid}).json()["id"]
+    assert client.post(
+        "/api/rules", json={"pattern": "ZOMBIE", "match": "contains", "category_id": cid}
+    ).status_code == 200
+    body = {"account_id": 0, "date": "2026-07-01", "description": "Zombie shop",
+            "amount": -5.0, "category_id": cid}
+    assert client.post("/api/transactions", json=body).status_code == 200
+
+    # Blocked without force, then force succeeds and reports what it unwound.
+    assert client.delete(f"/api/categories/{cid}").status_code == 409
+    resp = client.delete(f"/api/categories/{cid}?force=true")
+    assert resp.status_code == 200
+    assert any("transactions" in u for u in resp.json()["unwound"])
+
+    tx = client.get("/api/transactions").json()["items"][0]
+    assert tx["category_id"] is None
+    assert all(r["category_id"] != cid for r in client.get("/api/rules").json())
+    cats = {c["id"]: c for c in client.get("/api/categories").json()}
+    assert cid not in cats
+    assert cats[child]["parent_id"] is None
+
+
+def test_audit_resolve_marks_human():
+    client = make_client()
+    right = _create_category(client, "Right")
+    wrong = _create_category(client, "Wrong")
+    body = {"account_id": 0, "date": "2026-07-01", "description": "Disputed",
+            "amount": -5.0, "category_id": wrong}
+    assert client.post("/api/transactions", json=body).status_code == 200
+    tx = client.get("/api/transactions").json()["items"][0]
+
+    resp = client.post(
+        "/api/model/audit/resolve",
+        json={"transaction_ids": [tx["id"]], "category_id": right},
+    )
+    assert resp.status_code == 200 and resp.json()["updated"] == 1
+    tx = client.get("/api/transactions").json()["items"][0]
+    assert tx["category_id"] == right and tx["category_source"] == "human"
+
+    # Unknown category is rejected before touching anything.
+    resp = client.post(
+        "/api/model/audit/resolve",
+        json={"transaction_ids": [tx["id"]], "category_id": 424242},
+    )
+    assert resp.status_code == 422

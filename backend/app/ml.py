@@ -21,6 +21,9 @@ from .models import Transaction
 MODEL_PATH = DATA_DIR / "categorizer.joblib"
 CONFIDENCE_THRESHOLD = 0.75
 TRAIN_SOURCES = ("human", "rule")
+# Labels the audit may question: machine-made ones. Human decisions are
+# ground truth, and Splitwise corrections are structural, not guesses.
+AUDIT_SOURCES = ("rule", "model", "llm")
 
 
 def features(tx: Transaction) -> str:
@@ -122,3 +125,33 @@ def apply_model(
             tx.category_source = "model"
             applied += 1
     return {"applied": applied, "low_confidence": len(candidates) - applied}
+
+
+def audit(
+    db: Session, threshold: float = CONFIDENCE_THRESHOLD
+) -> list[tuple[Transaction, int, float]]:
+    """Second opinions: automatically-categorized rows where the model
+    confidently predicts a *different* category. Returns (transaction,
+    suggested_category_id, confidence); changes nothing — the human decides."""
+    model = load_model()
+    if model is None:
+        return []
+    txs = db.scalars(
+        select(Transaction)
+        .options(joinedload(Transaction.account))
+        .where(
+            Transaction.category_id.isnot(None),
+            Transaction.transfer_peer_id.is_(None),
+            Transaction.category_source.in_(AUDIT_SOURCES),
+        )
+    ).all()
+    if not txs:
+        return []
+    probabilities = model.predict_proba([features(t) for t in txs])
+    flagged = []
+    for tx, probs in zip(txs, probabilities):
+        best = probs.argmax()
+        suggested = int(model.classes_[best])
+        if probs[best] >= threshold and suggested != tx.category_id:
+            flagged.append((tx, suggested, float(probs[best])))
+    return flagged
