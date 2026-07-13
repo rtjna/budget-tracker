@@ -71,7 +71,7 @@ function niceTicks(max: number): number[] {
 
 export default function Dashboard() {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [view, setView] = useState<'time' | 'category'>('time')
+  const [view, setView] = useState<'time' | 'category' | 'year'>('time')
   const [selected, setSelected] = useState('')
   const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
@@ -138,6 +138,10 @@ export default function Dashboard() {
     if (categoryId === 0) return 'var(--series-uncat)'
     const slot = slots.get(categoryId)
     return SERIES_VARS[slot !== undefined ? slot : MAX_SLOTS]
+  }
+
+  if (view === 'year') {
+    return <YearView setView={setView} slotFill={slotFill} />
   }
 
   if (view === 'category') {
@@ -288,12 +292,108 @@ export default function Dashboard() {
   )
 }
 
+type YearSummary = {
+  year: number | null
+  years: number[]
+  spending: number
+  income: number
+  net: number
+  invested: number
+  categories: (CategoryTotal & { share: number })[]
+}
+
+function YearView({
+  setView,
+  slotFill,
+}: {
+  setView: (v: 'time' | 'category' | 'year') => void
+  slotFill: (id: number) => string
+}) {
+  const [data, setData] = useState<YearSummary | null>(null)
+  const [year, setYear] = useState<number | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api(`/api/stats/year${year ? `?year=${year}` : ''}`)
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setError('Could not load the year summary.'))
+  }, [year])
+
+  if (error) return <p className="review-intro dash-warning">{error}</p>
+  if (!data) return <p className="review-intro">Loading…</p>
+  if (data.year === null)
+    return <p className="review-intro">No data yet — import some transactions first.</p>
+
+  const max = Math.max(...data.categories.map((c) => c.total), 1)
+  return (
+    <section className="dash viz-root">
+      <div className="dash-filters">
+        <ViewSwitch view="year" setView={setView} />
+        <label>
+          Year{' '}
+          <select value={data.year} onChange={(e) => setYear(Number(e.target.value))}>
+            {[...data.years].reverse().map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="dash-note">
+          Whole calendar year · transfers excluded · investing tracked separately
+        </span>
+      </div>
+
+      <div className="kpi-row">
+        <StatTile label={`Spent — ${data.year}`} value={gbp(data.spending)} />
+        <StatTile label="Earned" value={gbp(data.income)} />
+        <StatTile
+          label="Net"
+          value={gbp(data.net)}
+          tip="Earned minus spent over the whole year"
+        />
+        <StatTile
+          label="Net invested"
+          value={gbp(data.invested)}
+          tip="Money moved into investments minus money taken out across the year — not counted in spending or income"
+        />
+      </div>
+
+      <ChartCard title={`Spending by category — ${data.year}`}>
+        <div className="bar-list year-list">
+          {data.categories.map((c) => (
+            <div key={c.id} className="bar-row year-row">
+              <span className="bar-name" title={c.name}>
+                {c.name}
+              </span>
+              <span className="bar-track">
+                <span
+                  className="bar-fill"
+                  style={{
+                    width: `${Math.max((c.total / max) * 100, 0)}%`,
+                    background: slotFill(c.id),
+                  }}
+                />
+              </span>
+              <span className="bar-value">{gbp(c.total)}</span>
+              <span className="bar-share">
+                {c.share.toFixed(1)}%<span className="sr-only"> of the year's spend</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </ChartCard>
+    </section>
+  )
+}
+
 function ViewSwitch({
   view,
   setView,
 }: {
-  view: 'time' | 'category'
-  setView: (v: 'time' | 'category') => void
+  view: 'time' | 'category' | 'year'
+  setView: (v: 'time' | 'category' | 'year') => void
 }) {
   return (
     <span className="view-switch">
@@ -311,6 +411,13 @@ function ViewSwitch({
       >
         By category
       </button>
+      <button
+        className={view === 'year' ? 'active' : ''}
+        onClick={() => setView('year')}
+        data-tip="A whole calendar year: totals, and each category's share of the year's spend"
+      >
+        By year
+      </button>
     </span>
   )
 }
@@ -325,7 +432,7 @@ function CategoryView({
   overview: Overview
   selectedCat: number
   setSelectedCat: (id: number) => void
-  setView: (v: 'time' | 'category') => void
+  setView: (v: 'time' | 'category' | 'year') => void
   slotFill: (id: number) => string
 }) {
   const [merchants, setMerchants] = useState<MonthDetail['merchants']>([])

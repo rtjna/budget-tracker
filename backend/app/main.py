@@ -344,6 +344,13 @@ def stats_overview(db: Session = Depends(get_db), months: int = Query(default=12
     return monthly_overview(db, months=months)
 
 
+@app.get("/api/stats/year")
+def stats_year(db: Session = Depends(get_db), year: int | None = Query(default=None, ge=1900, le=2200)):
+    from .stats import year_summary
+
+    return year_summary(db, year=year)
+
+
 @app.get("/api/stats/month/{month}")
 def stats_month(month: str, db: Session = Depends(get_db)):
     from .stats import month_detail

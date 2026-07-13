@@ -353,3 +353,14 @@
   right: auto;
   left: 8px;
 }
+
+/* Year view: category rows gain a share-of-spend column. */
+.year-row {
+  grid-template-columns: 8.5rem 1fr 5rem 3.5rem;
+}
+
+.bar-share {
+  text-align: right;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}

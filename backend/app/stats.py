@@ -190,6 +190,64 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
     }
 
 
+def year_summary(db: Session, year: int | None = None) -> dict:
+    """One calendar year: total spent/earned/invested and per-category spend
+    with each category's share of the year's total spend. Same conventions as
+    monthly_overview (refund semantics, transfers/investing/unknown-currency
+    exclusions)."""
+    txs = _spending_transactions(db)
+    years = sorted({t.date.year for t in txs})
+    if not years:
+        return {"year": None, "years": [], "spending": 0, "income": 0, "net": 0,
+                "invested": 0, "categories": []}
+    if year is None or year not in years:
+        year = years[-1]
+
+    categories = {c.id: c.name for c in db.scalars(select(Category))}
+    income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    spending = income = Decimal(0)
+    by_category: dict[int | None, Decimal] = defaultdict(Decimal)
+    for tx in txs:
+        if tx.date.year != year:
+            continue
+        gbp = to_gbp(tx.amount, tx.account.currency)
+        if gbp < 0:
+            spending += -gbp
+            by_category[tx.category_id] += -gbp
+        elif _is_income(tx, income_id):
+            income += gbp
+        else:
+            spending -= gbp
+            by_category[tx.category_id] -= gbp
+
+    invested = sum(
+        (v for month, v in _invested_by_month(db).items() if month.startswith(f"{year:04d}-")),
+        Decimal(0),
+    )
+    return {
+        "year": year,
+        "years": years,
+        "spending": float(spending),
+        "income": float(income),
+        "net": float(income - spending),
+        "invested": float(invested),
+        "categories": sorted(
+            (
+                {
+                    "id": cid if cid is not None else 0,
+                    "name": categories.get(cid, "Uncategorized"),
+                    "total": float(total),
+                    # Share of the year's net spend; a refund-heavy category
+                    # can legitimately be negative.
+                    "share": float(total / spending * 100) if spending else 0.0,
+                }
+                for cid, total in by_category.items()
+            ),
+            key=lambda c: -c["total"],
+        ),
+    }
+
+
 def month_detail(db: Session, month: str) -> dict:
     income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
     txs = [

@@ -217,3 +217,29 @@ def test_unknown_currency_excluded_and_reported_never_rate_one():
     assert june["spending"] == 10.0  # SEK row excluded, not counted 1:1
     assert data["excluded_currencies"] == {"currencies": ["SEK"], "transactions": 1}
     assert recurring(db) == []  # doesn't crash on the SEK account either
+
+
+def test_year_summary_totals_shares_and_year_list():
+    from app.stats import year_summary
+
+    db, gbp, _, groceries, _ = make_db()
+    coffee = Category(name="Coffee")
+    db.add(coffee)
+    db.flush()
+    add(db, gbp, date(2025, 11, 3), "OLD TESCO", "-10.00", cat=groceries.id)
+    add(db, gbp, date(2026, 3, 5), "TESCO", "-75.00", cat=groceries.id)
+    add(db, gbp, date(2026, 5, 9), "PRET", "-25.00", cat=coffee.id)
+    add(db, gbp, date(2026, 4, 28), "SALARY", "3000.00")
+    db.commit()
+
+    s = year_summary(db, 2026)
+    assert s["years"] == [2025, 2026]
+    assert s["spending"] == 100.0 and s["income"] == 3000.0 and s["net"] == 2900.0
+    by_name = {c["name"]: c for c in s["categories"]}
+    assert by_name["Groceries"]["total"] == 75.0 and by_name["Groceries"]["share"] == 75.0
+    assert by_name["Coffee"]["share"] == 25.0
+
+    # Default year is the latest with data; unknown years fall back too.
+    assert year_summary(db)["year"] == 2026
+    assert year_summary(db, 1999)["year"] == 2026
+    assert year_summary(db, 2025)["spending"] == 10.0
