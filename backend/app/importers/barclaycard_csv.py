@@ -49,6 +49,11 @@ class BarclaycardCsvImporter(BankImporter):
             amount = abs(Decimal(raw[2].replace(",", "").strip()))
             credit = any(w in raw[3].lower() for w in CREDIT_WORDS)
             memo = ",".join(raw[4:]).strip()  # tolerate unquoted commas in memo
+            # A returned/unpaid direct debit reverses a payment: the
+            # Subcategory still reads "Payment" but the money leaves the card
+            # account again.
+            if credit and re.search(r"returned|unpaid", f"{raw[3]} {memo}", re.IGNORECASE):
+                credit = False
             memo_parts = [p for p in re.split(r"\s{2,}", memo) if p]
             description = normalize_whitespace(memo_parts[-1] if memo_parts else memo)
             parsed.append(
