@@ -13,7 +13,11 @@ type MonthRow = {
 
 type CategoryTotal = { id: number; name: string; total: number }
 
-type Overview = { months: MonthRow[]; categories: CategoryTotal[] }
+type Overview = {
+  months: MonthRow[]
+  categories: CategoryTotal[]
+  excluded_currencies: { currencies: string[]; transactions: number }
+}
 
 type MonthDetail = {
   month: string
@@ -157,6 +161,14 @@ export default function Dashboard() {
           tracked separately, not as spending
         </span>
       </div>
+
+      {overview.excluded_currencies?.transactions > 0 && (
+        <p className="dash-warning" role="alert">
+          ⚠ {overview.excluded_currencies.transactions} transactions in{' '}
+          {overview.excluded_currencies.currencies.join(', ')} are excluded from all GBP totals —
+          no exchange rate is configured for them.
+        </p>
+      )}
 
       <div className="kpi-row">
         <StatTile

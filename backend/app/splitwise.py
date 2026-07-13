@@ -181,6 +181,8 @@ def _match_settlement(
     def amount_matches(tx: Transaction) -> bool:
         if currency == "GBP":
             return tx.account.currency == "GBP" and Decimal(tx.amount) == amount_gbp
+        if tx.account.currency not in GBP_RATES:
+            return False  # no rate, no honest comparison
         tx_gbp = to_gbp(Decimal(tx.amount), tx.account.currency)
         return abs(tx_gbp - amount_gbp) <= abs(amount_gbp) * FX_TOLERANCE
 
@@ -196,7 +198,8 @@ def sync(db: Session, client: SplitwiseClient | None = None) -> dict:
     categories = {c.name: c.id for c in db.scalars(select(Category))}
 
     stats = {"corrections": 0, "settlements_linked": 0, "settlements_pending": 0,
-             "skipped": 0, "uncategorized": 0}
+             "skipped": 0, "uncategorized": 0, "unknown_currency": 0,
+             "unknown_currencies": set()}
     batch = ImportBatch(source="splitwise", filename="splitwise-api")
     db.add(batch)
     db.flush()
@@ -222,6 +225,10 @@ def sync(db: Session, client: SplitwiseClient | None = None) -> dict:
                 continue
             net_gbp = _to_gbp(net, currency)
             if net_gbp is None:
+                # No GBP rate — counted and reported, not silently dropped
+                # forever (audit M2). Retried whenever a rate is added.
+                stats["unknown_currency"] += 1
+                stats["unknown_currencies"].add(currency)
                 continue
             # net > 0: I paid a friend -> bank shows -net. net < 0: friend paid
             # me -> bank shows -net (positive). Bank side is always -net; the
@@ -255,7 +262,11 @@ def sync(db: Session, client: SplitwiseClient | None = None) -> dict:
             stats["skipped"] += 1
             continue
         amount_gbp = _to_gbp(correction, currency)
-        if amount_gbp is None or amount_gbp == 0:
+        if amount_gbp is None:
+            stats["unknown_currency"] += 1
+            stats["unknown_currencies"].add(currency)
+            continue
+        if amount_gbp == 0:
             continue
         sw_category = (expense.get("category") or {}).get("name", "")
         category_id = categories.get(CATEGORY_MAP.get(sw_category, sw_category))
@@ -280,4 +291,5 @@ def sync(db: Session, client: SplitwiseClient | None = None) -> dict:
 
     batch.duplicate_count = stats["skipped"]
     db.commit()
+    stats["unknown_currencies"] = sorted(stats["unknown_currencies"])
     return stats

@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from statistics import median
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from .models import Account, Category, Transaction
@@ -43,7 +43,28 @@ def _is_income(tx, income_id) -> bool:
 
 
 def to_gbp(amount: Decimal, currency: str) -> Decimal:
-    return Decimal(amount) * GBP_RATES.get(currency, Decimal("1"))
+    """Convert to GBP. Refuses unknown currencies loudly — a silent 1:1
+    fallback would misstate totals by an order of magnitude (audit H1).
+    Callers filter with GBP_RATES first and report exclusions."""
+    rate = GBP_RATES.get(currency)
+    if rate is None:
+        raise ValueError(f"No GBP rate configured for {currency!r} — add it to GBP_RATES")
+    return Decimal(amount) * rate
+
+
+def _excluded_currencies(db: Session) -> dict:
+    """Transactions whose account currency has no GBP rate: excluded from all
+    GBP aggregates, reported so the dashboard can warn instead of lying."""
+    rows = db.execute(
+        select(Account.currency, func.count(Transaction.id))
+        .join(Transaction, Transaction.account_id == Account.id)
+        .where(Account.currency.not_in(list(GBP_RATES)))
+        .group_by(Account.currency)
+    ).all()
+    return {
+        "currencies": sorted(c for c, _ in rows),
+        "transactions": sum(n for _, n in rows),
+    }
 
 
 def _spending_transactions(db: Session) -> list[Transaction]:
@@ -64,7 +85,9 @@ def _spending_transactions(db: Session) -> list[Transaction]:
         query = query.where(
             Transaction.category_id.not_in(excluded_ids) | Transaction.category_id.is_(None)
         )
-    return list(db.scalars(query))
+    # Unknown-currency accounts can't be converted honestly; they are excluded
+    # here and surfaced via _excluded_currencies rather than converted 1:1.
+    return [t for t in db.scalars(query) if t.account.currency in GBP_RATES]
 
 
 def _invested_by_month(db: Session) -> dict[str, Decimal]:
@@ -83,6 +106,8 @@ def _invested_by_month(db: Session) -> dict[str, Decimal]:
         )
     )
     for tx in txs:
+        if tx.account.currency not in GBP_RATES:
+            continue
         invested[tx.date.strftime("%Y-%m")] += -to_gbp(tx.amount, tx.account.currency)
     return invested
 
@@ -136,6 +161,7 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
         for cid, v in by_month[k]["by_category"].items():
             category_totals[cid] += v
     return {
+        "excluded_currencies": _excluded_currencies(db),
         "months": [
             {
                 "month": m,

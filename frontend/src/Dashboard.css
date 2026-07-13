@@ -373,3 +373,17 @@
   font-weight: 700;
   opacity: 1;
 }
+
+.dash-warning {
+  border: 1px solid #d9770666;
+  border-radius: 8px;
+  padding: 0.5rem 0.8rem;
+  color: #b45309;
+  font-size: 0.9rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dash-warning {
+    color: #fbbf24;
+  }
+}

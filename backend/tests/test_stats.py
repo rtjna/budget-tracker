@@ -194,3 +194,26 @@ def test_investing_only_month_still_appears():
     by_month = {m["month"]: m for m in data["months"]}
     assert by_month["2026-06"]["invested"] == 500.0
     assert by_month["2026-06"]["spending"] == 0.0
+
+
+def test_unknown_currency_excluded_and_reported_never_rate_one():
+    import pytest as _pytest
+
+    from app.stats import to_gbp
+
+    with _pytest.raises(ValueError):
+        to_gbp(Decimal("100"), "SEK")
+
+    db, gbp, _, groceries, _ = make_db()
+    sek = Account(name="Revolut SEK", provider="revolut", kind="current", currency="SEK")
+    db.add(sek)
+    db.flush()
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-10.00", cat=groceries.id)
+    add(db, sek, date(2026, 6, 6), "STOCKHOLM SHOP", "-1300.00", cat=groceries.id)
+    db.commit()
+
+    data = monthly_overview(db)
+    (june,) = [m for m in data["months"] if m["month"] == "2026-06"]
+    assert june["spending"] == 10.0  # SEK row excluded, not counted 1:1
+    assert data["excluded_currencies"] == {"currencies": ["SEK"], "transactions": 1}
+    assert recurring(db) == []  # doesn't crash on the SEK account either

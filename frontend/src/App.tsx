@@ -195,7 +195,11 @@ export default function App() {
     }
     setTransferMsg(
       `Splitwise: ${data.corrections} corrections imported (${data.uncategorized} to review), ` +
-        `${data.settlements_linked} settle-ups linked, ${data.settlements_pending} awaiting bank data`,
+        `${data.settlements_linked} settle-ups linked, ${data.settlements_pending} awaiting bank data` +
+        (data.unknown_currency > 0
+          ? ` — ⚠ ${data.unknown_currency} items in ${(data.unknown_currencies ?? []).join(', ')} ` +
+            'skipped (no exchange rate); they will import once a rate is added'
+          : ''),
     )
     await Promise.all([loadStatic(), loadTxs(), loadReview()])
   }
