@@ -109,6 +109,22 @@ export default function Coverage() {
             </tbody>
           </table>
         </div>
+        <div className="legend coverage-legend">
+          <span className="legend-item">
+            <span className="swatch coverage-empty" /> none
+          </span>
+          {[
+            ['bucket-1', '1–4'],
+            ['bucket-2', '5–14'],
+            ['bucket-3', '15–39'],
+            ['bucket-4', '40+'],
+          ].map(([cls, label]) => (
+            <span key={cls} className="legend-item">
+              <span className={`swatch ${cls}`} /> {label}
+            </span>
+          ))}
+          <span className="legend-item">transactions / month</span>
+        </div>
         <p className="dash-note coverage-note">
           Empty cells mean no data for that account in that month. For statement-based
           accounts (Barclays, Barclaycard) that usually means a statement hasn't been

@@ -230,7 +230,7 @@ export default function Dashboard() {
             <tbody>
               {detail?.merchants.slice(0, 10).map((m) => (
                 <tr key={m.merchant}>
-                  <td className="merchant-name">{m.merchant}</td>
+                  <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
                   <td className="num muted">{m.count}×</td>
                   <td className="num">{gbp(m.total, 2)}</td>
                 </tr>
@@ -257,7 +257,7 @@ export default function Dashboard() {
           <tbody>
             {recurring.map((r) => (
               <tr key={r.merchant} className={r.active ? '' : 'lapsed'}>
-                <td className="merchant-name">{r.merchant}</td>
+                <td className="merchant-name" title={r.merchant}>{r.merchant}</td>
                 <td>{r.category}</td>
                 <td>{r.cadence}</td>
                 <td className="num">{gbp(r.typical_amount, 2)}</td>
@@ -405,7 +405,7 @@ function CategoryView({
             <tbody>
               {merchants.slice(0, 12).map((m) => (
                 <tr key={m.merchant}>
-                  <td className="merchant-name">{m.merchant}</td>
+                  <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
                   <td className="num muted">{m.count}×</td>
                   <td className="num">{gbp(m.total, 2)}</td>
                 </tr>
@@ -601,7 +601,7 @@ function StackedColumns({
   // Which segment (category) the pointer is on, so the tooltip can say
   // "this slice is X" instead of making the eye match colors to the legend.
   const [hoverSeg, setHoverSeg] = useState<number | null>(null)
-  const maxSpend = Math.max(...months.map((m) => m.spending))
+  const maxSpend = Math.max(...months.map((m) => m.spending), 1)
   const ticks = niceTicks(maxSpend)
   const top = ticks[ticks.length - 1]
   const plotW = W - PAD.left - PAD.right
@@ -614,13 +614,19 @@ function StackedColumns({
   // always on top — it is missing data, not a category, so it never hides
   // inside Other.
   const legendIds = [...slots.keys()]
+  // A refund-heavy category can be net-negative for a month. It can't be a
+  // slice, but it must not inflate "Smaller categories" either (audit M6):
+  // the residual is computed from positive slots only, and negatives are
+  // returned separately so the tooltip can state them explicitly.
   const stackFor = (m: MonthRow) => {
-    const parts = legendIds.map((id) => ({ id, value: m.by_category[String(id)] ?? 0 }))
+    const all = legendIds.map((id) => ({ id, value: m.by_category[String(id)] ?? 0 }))
+    const parts = all.filter((p) => p.value > 0)
+    const negatives = all.filter((p) => p.value < -0.005)
     const uncat = m.by_category['0'] ?? 0
     const other = m.spending - uncat - parts.reduce((s, p) => s + p.value, 0)
     if (other > 0.005) parts.push({ id: -1, value: other })
     if (uncat > 0.005) parts.push({ id: 0, value: uncat })
-    return parts.filter((p) => p.value > 0)
+    return { segs: parts.filter((p) => p.value > 0), negatives }
   }
   const segFill = (id: number) =>
     id === 0 ? 'var(--series-uncat)' : id === -1 ? SERIES_VARS[7] : SERIES_VARS[slots.get(id) ?? 7]
@@ -663,7 +669,7 @@ function StackedColumns({
           {months.map((m, mi) => {
             const x = PAD.left + band * mi + (band - barW) / 2
             let acc = 0
-            const segs = stackFor(m)
+            const { segs } = stackFor(m)
             return (
               <g
                 key={m.month}
@@ -732,7 +738,7 @@ function StackedColumns({
           >
             <strong>{monthLong(hovered.month)}</strong>
             {stackFor(hovered)
-              .slice()
+              .segs.slice()
               .reverse()
               .map((seg) => (
                 <div
@@ -744,6 +750,13 @@ function StackedColumns({
                   <span className="tt-label">{segName(seg.id)}</span>
                 </div>
               ))}
+            {stackFor(hovered).negatives.map((seg) => (
+              <div key={seg.id} className="tt-row">
+                <span className="tt-key" style={{ background: segFill(seg.id) }} />
+                <span className="tt-value">−{gbp(-seg.value)}</span>
+                <span className="tt-label">{segName(seg.id)} (net refunds)</span>
+              </div>
+            ))}
             <div className="tt-row tt-total">
               <span className="tt-value">{gbp(hovered.spending)}</span>
               <span className="tt-label">total</span>
@@ -799,7 +812,7 @@ function IncomeSpending({
   onSelect: (m: string) => void
 }) {
   const [hover, setHover] = useState<string | null>(null)
-  const maxV = Math.max(...months.map((m) => Math.max(m.income, m.spending)))
+  const maxV = Math.max(...months.map((m) => Math.max(m.income, m.spending)), 1)
   const ticks = niceTicks(maxV)
   const top = ticks[ticks.length - 1]
   const plotW = W - PAD.left - PAD.right
@@ -946,7 +959,7 @@ function BarList({ rows, fill }: { rows: CategoryTotal[]; fill: (id: number) => 
   return (
     <div className="bar-list">
       {rows.map((r) => (
-        <div key={r.id} className="bar-row" title={`${r.name}: ${gbp(r.total, 2)}`}>
+        <div key={r.id} className="bar-row" data-tip={`${r.name}: ${gbp(r.total, 2)}`}>
           <span className="bar-name">{r.name}</span>
           <span className="bar-track">
             <span

@@ -332,3 +332,7 @@
   font-size: 0.78rem;
   font-weight: 600;
 }
+
+.tx-scroll {
+  overflow-x: auto;
+}

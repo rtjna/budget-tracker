@@ -22,7 +22,9 @@ def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
 
 engine = create_engine(
     f"sqlite:///{DATA_DIR / 'budget.sqlite3'}",
-    connect_args={"check_same_thread": False},
+    # timeout: wait for a concurrent writer (e.g. a sync overlapping a manual
+    # edit in another threadpool worker) instead of "database is locked".
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 

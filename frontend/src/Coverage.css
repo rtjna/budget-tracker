@@ -76,3 +76,11 @@
 .coverage-note {
   margin: 0.6rem 0 0.2rem;
 }
+
+.coverage-legend {
+  margin-top: 0.5rem;
+}
+
+.coverage-legend .swatch {
+  border: 1px solid var(--gridline);
+}

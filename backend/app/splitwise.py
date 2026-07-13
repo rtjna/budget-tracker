@@ -38,7 +38,7 @@ CATEGORY_MAP = {
     "Dining out": "Eating Out",
     "Groceries": "Groceries",
     "Liquor": "Eating Out",
-    "Food and drink": "Food",
+    "Food and drink": "Eating Out",
     "Plane": "Travel",
     "Hotel": "Travel",
     "Bus/train": "Travel",
@@ -67,7 +67,7 @@ CATEGORY_MAP = {
     "TV/Phone/Internet": "Utilities & Bills",
     "Utilities": "Utilities & Bills",
     "Insurance": "Utilities & Bills",
-    "Education": "Education",
+    "Education": "Other",
 }
 
 

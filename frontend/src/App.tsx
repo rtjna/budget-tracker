@@ -88,14 +88,19 @@ const formatters = new Map<string, Intl.NumberFormat>()
 function money(amount: number, currency: string): string {
   let fmt = formatters.get(currency)
   if (!fmt) {
-    fmt = new Intl.NumberFormat('en-GB', { style: 'currency', currency })
+    try {
+      fmt = new Intl.NumberFormat('en-GB', { style: 'currency', currency })
+    } catch {
+      // Not a valid ISO-4217 code — plain number beats a crash.
+      fmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 })
+    }
     formatters.set(currency, fmt)
   }
   return fmt.format(amount)
 }
 
 function daysAgo(iso: string | null): string {
-  if (!iso) return 'no data'
+  if (!iso) return 'never'
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
   if (days <= 0) return 'today'
   if (days === 1) return 'yesterday'
@@ -164,18 +169,18 @@ export default function App() {
       const conn = await api('/api/monzo/connect')
       const connData = await conn.json()
       if (!conn.ok) {
-        setTransferMsg(connData.detail ?? 'Monzo is not configured')
+        setTransferMsg(`⚠ ${connData.detail ?? 'Monzo is not configured'}`)
         return
       }
       setMonzoUrl(connData.url)
       setTransferMsg(
-        'Monzo needs authorising — use the link below, approve in the Monzo app, then press Sync Monzo again (within 5 minutes for full history).',
+        'Monzo needs authorizing — use the link below, approve in the Monzo app, then press Sync Monzo again (within 5 minutes for full history).',
       )
       return
     }
     setMonzoUrl('')
     if (!res.ok) {
-      setTransferMsg(data.detail ?? 'Monzo sync failed')
+      setTransferMsg(`⚠ ${data.detail ?? 'Monzo sync failed'}`)
       return
     }
     setTransferMsg(
@@ -191,7 +196,7 @@ export default function App() {
     const res = await api('/api/splitwise/sync', { method: 'POST' })
     const data = await res.json()
     if (!res.ok) {
-      setTransferMsg(data.detail ?? 'Splitwise sync failed')
+      setTransferMsg(`⚠ ${data.detail ?? 'Splitwise sync failed'}`)
       return
     }
     setTransferMsg(
@@ -487,7 +492,7 @@ export default function App() {
             </button>
             <button
               onClick={syncMonzo}
-              data-tip="Pull recent transactions straight from Monzo via its API (asks you to re-authorise when the connection has expired)"
+              data-tip="Pull recent transactions straight from Monzo via its API (asks you to re-authorize when the connection has expired)"
             >
               ⚡ Sync Monzo
             </button>
@@ -505,7 +510,7 @@ export default function App() {
                 <>
                   {' '}
                   <a href={monzoUrl} target="_blank" rel="noreferrer">
-                    → Authorise with Monzo
+                    → Authorize with Monzo
                   </a>
                 </>
               )}
@@ -522,6 +527,7 @@ export default function App() {
             />
           )}
 
+          <div className="tx-scroll">
           <table className="tx-table">
             <thead>
               <tr>
@@ -581,7 +587,8 @@ export default function App() {
                         className="delete-btn"
                         data-tip="Delete this manually entered transaction"
                         onClick={async () => {
-                          if (!confirm(`Delete "${t.description}" (${money(t.amount, 'GBP')})?`)) return
+                          const cur = accounts.find((a) => a.id === t.account_id)?.currency ?? 'GBP'
+                          if (!confirm(`Delete "${t.description}" (${money(t.amount, cur)})?`)) return
                           await api(`/api/transactions/${t.id}`, { method: 'DELETE' })
                           await Promise.all([loadStatic(), loadTxs(), loadReview()])
                         }}
@@ -594,6 +601,7 @@ export default function App() {
               ))}
             </tbody>
           </table>
+          </div>
 
           <footer className="pager">
             <button disabled={page === 0} onClick={() => setPage(page - 1)} data-tip="Previous page">
@@ -712,14 +720,14 @@ function AddTransaction({
         onChange={(e) => setForm({ ...form, kind: e.target.value as 'expense' | 'income' })}
       >
         <option value="expense">Expense</option>
-        <option value="income">Money in</option>
+        <option value="income">Income</option>
       </select>
       <input
         className="add-tx-amount"
         type="number"
         min="0.01"
         step="0.01"
-        placeholder="Amount £"
+        placeholder="Amount"
         value={form.amount}
         onChange={(e) => setForm({ ...form, amount: e.target.value })}
         onKeyDown={(e) => e.key === 'Enter' && submit()}

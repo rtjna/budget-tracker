@@ -169,9 +169,14 @@ def llm_categorize(db: Session = Depends(get_db), max_merchants: int = Query(def
         raise HTTPException(status_code=502, detail=f"Claude API error: {e}")
 
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # far above any real bank export
+
+
 @app.post("/api/imports")
 async def create_import(file: UploadFile, db: Session = Depends(get_db)):
-    data = await file.read()
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File is larger than 25 MB — not a bank export")
     try:
         if data[:5] == b"%PDF-":
             from .importers import barclaycard_pdf, barclays_pdf

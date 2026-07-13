@@ -118,7 +118,14 @@ def _access_token() -> str:
     tokens = _load_tokens()
     if tokens is None:
         raise NotConnected("Monzo is not connected yet")
-    obtained = datetime.fromisoformat(tokens.get("obtained_at"))
+    # A token file without obtained_at (older version, hand-edited) means the
+    # session age is unknown — treat as expired and refresh, don't crash.
+    obtained_raw = tokens.get("obtained_at")
+    obtained = (
+        datetime.fromisoformat(obtained_raw)
+        if obtained_raw
+        else datetime.min.replace(tzinfo=timezone.utc)
+    )
     expires_in = int(tokens.get("expires_in", 0))
     if datetime.now(timezone.utc) < obtained + timedelta(seconds=max(expires_in - 300, 60)):
         return tokens["access_token"]
