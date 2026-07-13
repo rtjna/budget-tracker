@@ -147,7 +147,7 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
   const [monthFilter, setMonthFilter] = useState('')
   const [months, setMonths] = useState<string[]>([])
-  const [sortAsc, setSortAsc] = useState(false)
+  const [sortOrder, setSortOrder] = useState('date_desc')
   const [onlyUncategorized, setOnlyUncategorized] = useState(false)
   const [review, setReview] = useState<ReviewGroup[]>([])
   const [reviewTotal, setReviewTotal] = useState(0)
@@ -233,13 +233,13 @@ export default function App() {
     if (accountFilter.startsWith('p:')) params.set('provider', accountFilter.slice(2))
     else if (accountFilter !== '') params.set('account_id', accountFilter)
     if (monthFilter) params.set('month', monthFilter)
-    if (sortAsc) params.set('order', 'date_asc')
+    if (sortOrder !== 'date_desc') params.set('order', sortOrder)
     if (categoryFilter !== '') params.set('category_id', String(categoryFilter))
     if (onlyUncategorized) params.set('uncategorized', 'true')
     const data = await (await api(`/api/transactions?${params}`)).json()
     setTxs(data.items)
     setTotal(data.total)
-  }, [page, search, accountFilter, categoryFilter, monthFilter, sortAsc, onlyUncategorized])
+  }, [page, search, accountFilter, categoryFilter, monthFilter, sortOrder, onlyUncategorized])
 
   const loadReview = useCallback(async () => {
     const data = await (await api('/api/review')).json()
@@ -488,15 +488,19 @@ export default function App() {
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => {
-                setSortAsc(!sortAsc)
+            <select
+              value={sortOrder}
+              onChange={(e) => {
+                setSortOrder(e.target.value)
                 setPage(0)
               }}
-              data-tip="Flip the date order of the list"
+              data-tip="Order the list by date or by size (largest = biggest amount, in or out)"
             >
-              {sortAsc ? '↑ Oldest first' : '↓ Newest first'}
-            </button>
+              <option value="date_desc">↓ Newest first</option>
+              <option value="date_asc">↑ Oldest first</option>
+              <option value="amount_desc">↓ Largest first</option>
+              <option value="amount_asc">↑ Smallest first</option>
+            </select>
             <label className="checkbox">
               <input
                 type="checkbox"

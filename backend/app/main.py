@@ -430,7 +430,7 @@ def list_transactions(
     date_to: date | None = None,
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     uncategorized: bool = False,
-    order: str = Query(default="date_desc", pattern="^date_(asc|desc)$"),
+    order: str = Query(default="date_desc", pattern="^(date|amount)_(asc|desc)$"),
     limit: int = Query(default=50, le=500),
     offset: int = 0,
 ):
@@ -458,11 +458,14 @@ def list_transactions(
         query = query.where(models.Transaction.category_id.is_(None))
 
     total = db.scalar(select(func.count()).select_from(query.subquery()))
-    ordering = (
-        (models.Transaction.date.asc(), models.Transaction.id.asc())
-        if order == "date_asc"
-        else (models.Transaction.date.desc(), models.Transaction.id.desc())
-    )
+    # "Size" is magnitude: a £3,000 salary and a £3,000 rent payment are both
+    # big, regardless of sign. Date breaks ties either way.
+    ordering = {
+        "date_asc": (models.Transaction.date.asc(), models.Transaction.id.asc()),
+        "date_desc": (models.Transaction.date.desc(), models.Transaction.id.desc()),
+        "amount_desc": (func.abs(models.Transaction.amount).desc(), models.Transaction.date.desc()),
+        "amount_asc": (func.abs(models.Transaction.amount).asc(), models.Transaction.date.desc()),
+    }[order]
     txs = db.scalars(query.order_by(*ordering).limit(limit).offset(offset)).all()
     return {
         "total": total,

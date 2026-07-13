@@ -101,3 +101,18 @@ def test_transactions_month_filter_and_order():
 
     assert client.get("/api/transactions?month=07/2026").status_code == 422
     assert client.get("/api/transactions?order=amount").status_code == 422
+
+
+def test_transactions_order_by_size():
+    from tests.test_categories import make_client
+
+    client = make_client()
+    for d, desc, amt in [("2026-07-01", "SMALL", -5.0), ("2026-07-02", "BIG OUT", -300.0),
+                         ("2026-07-03", "BIG IN", 200.0)]:
+        body = {"account_id": 0, "date": d, "description": desc, "amount": amt}
+        assert client.post("/api/transactions", json=body).status_code == 200
+
+    largest = client.get("/api/transactions?order=amount_desc").json()
+    assert [t["description"] for t in largest["items"]] == ["BIG OUT", "BIG IN", "SMALL"]
+    smallest = client.get("/api/transactions?order=amount_asc").json()
+    assert [t["description"] for t in smallest["items"]] == ["SMALL", "BIG IN", "BIG OUT"]
