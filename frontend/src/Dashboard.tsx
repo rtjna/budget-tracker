@@ -267,10 +267,18 @@ function ViewSwitch({
 }) {
   return (
     <span className="view-switch">
-      <button className={view === 'time' ? 'active' : ''} onClick={() => setView('time')}>
+      <button
+        className={view === 'time' ? 'active' : ''}
+        onClick={() => setView('time')}
+        data-tip="Spending over time — one column per month, split by category"
+      >
         By month
       </button>
-      <button className={view === 'category' ? 'active' : ''} onClick={() => setView('category')}>
+      <button
+        className={view === 'category' ? 'active' : ''}
+        onClick={() => setView('category')}
+        data-tip="Totals per category with the merchants behind them"
+      >
         By category
       </button>
     </span>
@@ -511,7 +519,11 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
     <div className="chart-card">
       <div className="chart-card-head">
         <h3>{title}</h3>
-        <button className="table-toggle" onClick={() => setTable(!table)}>
+        <button
+          className="table-toggle"
+          onClick={() => setTable(!table)}
+          data-tip="Switch between the chart and the same numbers as a table"
+        >
           {table ? 'chart' : 'table'}
         </button>
       </div>

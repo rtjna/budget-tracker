@@ -4,6 +4,14 @@ import Coverage from './Coverage'
 import Dashboard from './Dashboard'
 import './App.css'
 
+// Hover explanations for the badge showing who categorized a transaction.
+const SOURCE_TIPS: Record<string, string> = {
+  rule: 'Categorized automatically by one of your rules',
+  model: 'Categorized by the local ML model (≥75% confident)',
+  llm: 'Categorized by Claude based on the merchant name',
+  splitwise: 'Created from Splitwise as a shared-expense correction',
+}
+
 type Account = {
   id: number
   name: string
@@ -270,7 +278,10 @@ export default function App() {
         }}
       >
         <p>Drop bank exports here (CSV, Excel, or Barclays PDF statements), or</p>
-        <label className="filepick">
+        <label
+          className="filepick"
+          data-tip="Pick bank export files to import — the format and bank are detected automatically, and re-importing the same file is safe (duplicates are skipped)"
+        >
           choose files
           <input
             type="file"
@@ -310,19 +321,32 @@ export default function App() {
       )}
 
       <nav className="tabs">
-        <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>
+        <button
+          className={tab === 'dashboard' ? 'active' : ''}
+          onClick={() => setTab('dashboard')}
+          data-tip="Monthly spending charts and category breakdowns"
+        >
           Dashboard
         </button>
         <button
           className={tab === 'transactions' ? 'active' : ''}
           onClick={() => setTab('transactions')}
+          data-tip="Browse, search, and filter every transaction; sync and import tools"
         >
           Transactions
         </button>
-        <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>
+        <button
+          className={tab === 'review' ? 'active' : ''}
+          onClick={() => setTab('review')}
+          data-tip="Categorize what's still uncategorized, grouped by merchant"
+        >
           Review{reviewTotal > 0 ? ` (${reviewTotal})` : ''}
         </button>
-        <button className={tab === 'coverage' ? 'active' : ''} onClick={() => setTab('coverage')}>
+        <button
+          className={tab === 'coverage' ? 'active' : ''}
+          onClick={() => setTab('coverage')}
+          data-tip="Which accounts have data for which months, and where the gaps are"
+        >
           Coverage
         </button>
       </nav>
@@ -376,16 +400,28 @@ export default function App() {
               />
               uncategorized
             </label>
-            <button onClick={detectTransfers} title="Link transfers between your own accounts">
+            <button
+              onClick={detectTransfers}
+              data-tip="Find matching money movements between your own accounts (card payments, top-ups) and link them so they don't count as spending or income"
+            >
               ⇄ Detect transfers
             </button>
-            <button onClick={syncSplitwise} title="Import shared-expense corrections from Splitwise">
+            <button
+              onClick={syncSplitwise}
+              data-tip="Pull your Splitwise balances and apply corrections so shared expenses only count your share"
+            >
               ⚖ Sync Splitwise
             </button>
-            <button onClick={syncMonzo} title="Sync transactions from the Monzo API">
+            <button
+              onClick={syncMonzo}
+              data-tip="Pull recent transactions straight from Monzo via its API (asks you to re-authorise when the connection has expired)"
+            >
               ⚡ Sync Monzo
             </button>
-            <button onClick={() => setShowAdd(!showAdd)} title="Enter a transaction manually">
+            <button
+              onClick={() => setShowAdd(!showAdd)}
+              data-tip="Enter a transaction by hand — e.g. cash spending no bank export will ever contain"
+            >
               {showAdd ? '× Close' : '+ Add transaction'}
             </button>
           </section>
@@ -430,7 +466,10 @@ export default function App() {
                   <td>
                     {t.description}
                     {t.transfer_peer_id !== null && (
-                      <span className="source-badge" title="Linked transfer between your accounts">
+                      <span
+                        className="source-badge"
+                        data-tip="Linked to its counterpart in another of your accounts — excluded from spending and income"
+                      >
                         ⇄ transfer
                       </span>
                     )}
@@ -444,7 +483,12 @@ export default function App() {
                         placeholder="—"
                       />
                       {t.category_source && t.category_source !== 'human' && (
-                        <span className="source-badge">{t.category_source}</span>
+                        <span
+                          className="source-badge"
+                          data-tip={SOURCE_TIPS[t.category_source] ?? 'Categorized automatically'}
+                        >
+                          {t.category_source}
+                        </span>
                       )}
                     </span>
                   </td>
@@ -455,7 +499,7 @@ export default function App() {
                     {t.manual && (
                       <button
                         className="delete-btn"
-                        title="Delete this manually entered transaction"
+                        data-tip="Delete this manually entered transaction"
                         onClick={async () => {
                           if (!confirm(`Delete "${t.description}" (${money(t.amount, 'GBP')})?`)) return
                           await api(`/api/transactions/${t.id}`, { method: 'DELETE' })
@@ -472,13 +516,17 @@ export default function App() {
           </table>
 
           <footer className="pager">
-            <button disabled={page === 0} onClick={() => setPage(page - 1)}>
+            <button disabled={page === 0} onClick={() => setPage(page - 1)} data-tip="Previous page">
               ← Prev
             </button>
             <span>
               Page {page + 1} of {pageCount} ({total} transactions)
             </span>
-            <button disabled={page + 1 >= pageCount} onClick={() => setPage(page + 1)}>
+            <button
+              disabled={page + 1 >= pageCount}
+              onClick={() => setPage(page + 1)}
+              data-tip="Next page"
+            >
               Next →
             </button>
           </footer>
@@ -606,7 +654,9 @@ function AddTransaction({
         value={form.categoryId}
         onChange={(id) => setForm({ ...form, categoryId: id ?? '' })}
       />
-      <button onClick={submit}>Add</button>
+      <button onClick={submit} data-tip="Save this transaction to the selected account">
+        Add
+      </button>
       {error && <span className="error">{error}</span>}
     </div>
   )
@@ -633,7 +683,11 @@ function AddCategory({ onAdded }: { onAdded: () => void }) {
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && add()}
       />
-      <button onClick={add} disabled={!name.trim()}>
+      <button
+        onClick={add}
+        disabled={!name.trim()}
+        data-tip="Create a new category to use when categorizing transactions"
+      >
         + Add category
       </button>
     </div>
@@ -665,7 +719,11 @@ function TrainModel({ onDone }: { onDone: () => void }) {
   }
   return (
     <div className="train-model">
-      <button onClick={trainNow} disabled={busy}>
+      <button
+        onClick={trainNow}
+        disabled={busy}
+        data-tip="Train the local ML model on your own categorizations, then auto-fill any uncategorized transactions it is at least 75% sure about. Runs entirely on this machine — free and private."
+      >
         {busy ? 'Training…' : '🧠 Train model & auto-categorize'}
       </button>
       {result && <span className="review-meta">{result}</span>}
@@ -699,7 +757,11 @@ function AskClaude({ onDone }: { onDone: () => void }) {
   }
   return (
     <div className="train-model">
-      <button onClick={run} disabled={busy}>
+      <button
+        onClick={run}
+        disabled={busy}
+        data-tip="Send still-uncategorized merchant names (never amounts, dates, or balances) to the Claude API and apply its suggestions. Each merchant is only ever asked once. Uses your API key — costs a little."
+      >
         {busy ? 'Asking Claude…' : '✨ Ask Claude'}
       </button>
       {result && <span className="review-meta">{result}</span>}
@@ -731,7 +793,10 @@ function ReviewRow({
           value={''}
           onChange={(id) => onAssign(group, id, createRule)}
         />
-        <label className="checkbox" title="Create a rule so future imports auto-categorize">
+        <label
+          className="checkbox"
+          data-tip="Also create a rule, so this merchant is categorized automatically in every future import"
+        >
           <input
             type="checkbox"
             checked={createRule}

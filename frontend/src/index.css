@@ -22,3 +22,43 @@ button:disabled {
   opacity: 0.4;
   cursor: default;
 }
+
+/* Instant hover tooltips: anything with a data-tip attribute grows a bubble
+   below it on hover or keyboard focus. Pure CSS — no JS, no library. */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, -3px);
+  width: max-content;
+  max-width: 260px;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #ffffff30;
+  background: #20242ef2;
+  color: #f4f5f8;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform-origin: top center;
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+  pointer-events: none;
+  z-index: 40;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition-delay: 0.3s; /* no flicker while sweeping the cursor across the UI */
+}
