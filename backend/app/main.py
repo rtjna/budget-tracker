@@ -379,6 +379,15 @@ def list_accounts(db: Session = Depends(get_db)):
         .outerjoin(models.Transaction)
         .group_by(models.Account.id)
     ).all()
+    # When the account was last fed data (file import or API sync) — distinct
+    # from the latest transaction date, which also moves with mere inactivity.
+    last_imports = dict(
+        db.execute(
+            select(models.Transaction.account_id, func.max(models.ImportBatch.imported_at))
+            .join(models.ImportBatch, models.Transaction.import_batch_id == models.ImportBatch.id)
+            .group_by(models.Transaction.account_id)
+        ).all()
+    )
     return [
         {
             "id": account.id,
@@ -388,6 +397,7 @@ def list_accounts(db: Session = Depends(get_db)):
             "currency": account.currency,
             "transaction_count": count,
             "latest_transaction": latest,
+            "last_imported": last_imports.get(account.id),
         }
         for account, count, latest in rows
     ]
@@ -397,6 +407,7 @@ def list_accounts(db: Session = Depends(get_db)):
 def list_transactions(
     db: Session = Depends(get_db),
     account_id: int | None = None,
+    provider: str | None = None,
     category_id: int | None = None,
     search: str | None = None,
     date_from: date | None = None,
@@ -408,6 +419,13 @@ def list_transactions(
     query = select(models.Transaction)
     if account_id is not None:
         query = query.where(models.Transaction.account_id == account_id)
+    if provider is not None:
+        # All of a provider's accounts at once (e.g. every Revolut currency).
+        query = query.where(
+            models.Transaction.account_id.in_(
+                select(models.Account.id).where(models.Account.provider == provider)
+            )
+        )
     if category_id is not None:
         query = query.where(models.Transaction.category_id == category_id)
     if search:

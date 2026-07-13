@@ -20,6 +20,33 @@ type Account = {
   currency: string
   transaction_count: number
   latest_transaction: string | null
+  last_imported: string | null
+}
+
+// One card per data source: a provider's currency accounts (e.g. the five
+// Revolut ones) are one source, imported from the same exports.
+function accountGroups(accounts: Account[]) {
+  const byProvider = new Map<string, Account[]>()
+  for (const a of accounts) {
+    byProvider.set(a.provider, [...(byProvider.get(a.provider) ?? []), a])
+  }
+  return [...byProvider.entries()].map(([provider, accs]) => {
+    const currencies = [...new Set(accs.map((a) => a.currency))]
+    const latest = accs.map((a) => a.latest_transaction).filter(Boolean).sort().at(-1) ?? null
+    const imported = accs.map((a) => a.last_imported).filter(Boolean).sort().at(-1) ?? null
+    return {
+      key: provider,
+      name:
+        accs.length === 1 ? accs[0].name : provider.charAt(0).toUpperCase() + provider.slice(1),
+      filter: accs.length === 1 ? String(accs[0].id) : `p:${provider}`,
+      count: accs.reduce((s, a) => s + a.transaction_count, 0),
+      currencyLabel: currencies.length === 1 ? currencies[0] : `${currencies.length} currencies`,
+      latest,
+      imported,
+      stale:
+        imported !== null && (Date.now() - new Date(imported).getTime()) / 86_400_000 > 30,
+    }
+  })
 }
 
 type Category = { id: number; name: string; parent_id: number | null }
@@ -109,7 +136,9 @@ export default function App() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
-  const [accountFilter, setAccountFilter] = useState<number | ''>('')
+  // '' = all, a numeric string = one account, 'p:<provider>' = all of a
+  // provider's accounts (e.g. every Revolut currency at once).
+  const [accountFilter, setAccountFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
   const [onlyUncategorized, setOnlyUncategorized] = useState(false)
   const [review, setReview] = useState<ReviewGroup[]>([])
@@ -186,7 +215,8 @@ export default function App() {
       offset: String(page * PAGE_SIZE),
     })
     if (search) params.set('search', search)
-    if (accountFilter !== '') params.set('account_id', String(accountFilter))
+    if (accountFilter.startsWith('p:')) params.set('provider', accountFilter.slice(2))
+    else if (accountFilter !== '') params.set('account_id', accountFilter)
     if (categoryFilter !== '') params.set('category_id', String(categoryFilter))
     if (onlyUncategorized) params.set('uncategorized', 'true')
     const data = await (await api(`/api/transactions?${params}`)).json()
@@ -308,13 +338,28 @@ export default function App() {
 
       {accounts.length > 0 && (
         <section className="accounts">
-          {accounts.map((a) => (
-            <div key={a.id} className="account-card">
-              <strong>{a.name}</strong>
+          {accountGroups(accounts).map((g) => (
+            <div
+              key={g.key}
+              className="account-card clickable"
+              data-tip={`Show all ${g.name} transactions`}
+              onClick={() => {
+                setAccountFilter(g.filter)
+                setPage(0)
+                setTab('transactions')
+              }}
+            >
+              <strong>
+                {g.name}
+                {g.stale && <span className="stale-flag"> ⚠ stale</span>}
+              </strong>
               <span>
-                {a.transaction_count} transactions · {a.currency}
+                {g.count} transactions · {g.currencyLabel}
               </span>
-              <span className="coverage">latest: {daysAgo(a.latest_transaction)}</span>
+              <span className="coverage">
+                activity {daysAgo(g.latest)}
+                {g.imported ? ` · imported ${daysAgo(g.imported)}` : ' · manual entries'}
+              </span>
             </div>
           ))}
         </section>
@@ -369,13 +414,20 @@ export default function App() {
             <select
               value={accountFilter}
               onChange={(e) => {
-                setAccountFilter(e.target.value === '' ? '' : Number(e.target.value))
+                setAccountFilter(e.target.value)
                 setPage(0)
               }}
             >
               <option value="">All accounts</option>
+              {accountGroups(accounts)
+                .filter((g) => g.filter.startsWith('p:'))
+                .map((g) => (
+                  <option key={g.filter} value={g.filter}>
+                    {g.name} (all currencies)
+                  </option>
+                ))}
               {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
+                <option key={a.id} value={String(a.id)}>
                   {a.name}
                 </option>
               ))}

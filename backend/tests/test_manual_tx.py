@@ -56,3 +56,28 @@ def test_rejects_empty_and_zero(monkeypatch):
     assert client.post("/api/transactions", json=bad).status_code == 422
     bad2 = {"account_id": 0, "date": "2026-07-10", "description": "x", "amount": 0}
     assert client.post("/api/transactions", json=bad2).status_code == 422
+
+
+def test_accounts_report_last_imported_and_provider_filter():
+    from tests.test_categories import make_client
+
+    client = make_client()
+    csv_text = "Date,Description,Amount\n01/07/2026,TESCO,10.00\n"
+    r = client.post("/api/imports", files={"file": ("amex.csv", csv_text, "text/csv")})
+    assert r.status_code == 200
+
+    accounts = client.get("/api/accounts").json()
+    amex = next(a for a in accounts if a["provider"] == "amex")
+    assert amex["last_imported"] is not None
+
+    # Manual account has no import batches.
+    body = {"account_id": 0, "date": "2026-07-01", "description": "Cash thing", "amount": -1.0}
+    assert client.post("/api/transactions", json=body).status_code == 200
+    accounts = client.get("/api/accounts").json()
+    cash = next(a for a in accounts if a["provider"] == "manual")
+    assert cash["last_imported"] is None
+
+    # Provider filter returns only that provider's transactions.
+    data = client.get("/api/transactions?provider=amex").json()
+    assert data["total"] == 1 and data["items"][0]["description"] == "TESCO"
+    assert client.get("/api/transactions?provider=manual").json()["total"] == 1
