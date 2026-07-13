@@ -78,7 +78,12 @@ def _few_shot(db: Session) -> list[tuple[str, str]]:
 
 def _pending_merchants(db: Session, max_merchants: int) -> list[tuple[str, str]]:
     """Uncategorized, non-transfer merchants not yet asked, with one sample
-    description each, biggest transaction count first."""
+    description each, biggest transaction count first. Transfer-shaped
+    descriptions are excluded: an unlinked card payment or top-up is a
+    transfer leg whose counterpart is missing, not spending Claude should
+    guess a category for."""
+    from .transfers import TRANSFERISH
+
     asked = select(LlmMerchantCache.merchant)
     rows = db.execute(
         select(Transaction.merchant, func.max(Transaction.description))
@@ -92,7 +97,11 @@ def _pending_merchants(db: Session, max_merchants: int) -> list[tuple[str, str]]
         .order_by(func.count(Transaction.id).desc())
         .limit(max_merchants)
     ).all()
-    return [(merchant, sample) for merchant, sample in rows]
+    return [
+        (merchant, sample)
+        for merchant, sample in rows
+        if not TRANSFERISH.search(f"{merchant} {sample}")
+    ]
 
 
 def _prompt(categories: list[str], examples: list[tuple[str, str]], batch: list[tuple[str, str]]) -> str:

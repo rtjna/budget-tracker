@@ -160,6 +160,9 @@ def llm_categorize(db: Session = Depends(get_db), max_merchants: int = Query(def
 
     from .llm import categorize_merchants
 
+    # Link transfer pairs first so Claude is never asked about a payment leg
+    # that simply hadn't been matched yet.
+    detect_transfers(db)
     try:
         return categorize_merchants(db, max_merchants=max_merchants)
     except RuntimeError as e:

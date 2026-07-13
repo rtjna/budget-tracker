@@ -139,3 +139,20 @@ def test_grammar_timeout_gives_up_after_retries(monkeypatch):
 
     with pytest.raises(anthropic.BadRequestError):
         categorize_merchants(db, client=client)
+
+
+def test_pending_merchants_skip_transfer_shaped_descriptions():
+    from datetime import date as _date
+
+    from app.llm import _pending_merchants
+    from app.models import Transaction as _Tx
+
+    db, *_ = make_db()
+    db.add(_Tx(
+        account_id=1, date=_date(2026, 7, 1), description="AMERICAN EXP 3773 PB123456 FT",
+        merchant="AMERICAN EXP FT", amount=Decimal("-500"), fingerprint="fpamex",
+    ))
+    db.commit()
+    pending = dict(_pending_merchants(db, 50))
+    assert "AMERICAN EXP FT" not in pending  # transfer leg, not spending
+    assert "OCADO RETAIL LTD" in pending  # real merchants still asked

@@ -16,7 +16,7 @@ from .models import Transaction
 # "BILL PAYMENT" and "PAYMENT TO/FROM" count.
 TRANSFERISH = re.compile(
     r"PAYMENT RECEIVED|BILL PAYMENT|PAYMENT (TO|FROM)\b|TRANSFER|EXCHANGE|TOP ?UP"
-    r"|THANK YOU|REVOLUT|AMEX|AMERICAN EXPRESS"
+    r"|THANK YOU|REVOLUT|AMEX|AMERICAN EXP"  # 'AMERICAN EXP 3773 ... FT' (Barclays leg)
     r"|MONZO|BARCLAY|B/CARD|SAVING|STANDING ORDER|DIRECT DEBIT RECEIVED"
     r"|PAYMENT (\?|BY) DIRECT DEBIT",  # Barclaycard credit-side leg ('B' glyph unmapped)
     re.IGNORECASE,
@@ -24,7 +24,10 @@ TRANSFERISH = re.compile(
 
 EXCHANGE = re.compile(r"\bEXCHANGED? (TO|FROM)\b", re.IGNORECASE)
 
-MAX_DATE_DIFF = timedelta(days=3)
+# 5 days: a payment initiated around a weekend + bank holiday can post 4
+# calendar days apart on the two accounts (seen in real data). Exact amounts
+# and TRANSFERISH descriptions keep false positives unlikely at this width.
+MAX_DATE_DIFF = timedelta(days=5)
 
 
 def _unmatched(db: Session) -> list[Transaction]:
