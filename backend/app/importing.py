@@ -26,7 +26,12 @@ class CrossFormatOverlapError(Exception):
 # Sources that describe the same underlying account through different file
 # formats. Fingerprints include the description, which each format renders
 # differently, so dedup can't stop a statement being imported once per format.
-CROSS_FORMAT_SOURCES = {"barclays_pdf": "barclays", "barclays": "barclays_pdf"}
+CROSS_FORMAT_SOURCES = {
+    "barclays_pdf": "barclays",
+    "barclays": "barclays_pdf",
+    "barclaycard_pdf": "barclaycard",
+    "barclaycard": "barclaycard_pdf",
+}
 # Refuse when more than this share of the file's (date, amount) pairs already
 # exist in the account via the sibling format.
 OVERLAP_THRESHOLD = 0.5
@@ -90,6 +95,11 @@ def import_file(db: Session, filename: str, text: str) -> ImportBatch:
     header = next(reader, None)
     if header is None:
         raise UnrecognizedFileError("File is empty")
+    if len([f for f in header if f.strip()]) <= 1:
+        # Some exports (e.g. Barclaycard) start with a bare title line.
+        header = next(reader, None)
+        if header is None:
+            raise UnrecognizedFileError("File is empty")
     sample = [row for _, row in zip(range(5), reader)]
     importer = detect_importer(header, sample)
     if importer is None:

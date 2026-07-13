@@ -25,7 +25,19 @@ class AmexImporter(BankImporter):
     def matches(self, header: list[str], sample_rows: list[list[str]]) -> bool:
         if [h.strip().lower() for h in header] != ["date", "description", "amount"]:
             return False
-        return all(DDMMYYYY.match(row[0]) for row in sample_rows if row)
+        # Exactly three columns with parseable amounts — this signature is
+        # generic, so be strict to avoid hijacking another bank's export
+        # (which would silently invert every sign).
+        for row in sample_rows:
+            if not row:
+                continue
+            if len(row) != 3 or not DDMMYYYY.match(row[0]):
+                return False
+            try:
+                Decimal(row[2].replace(",", "").strip())
+            except Exception:
+                return False
+        return True
 
     def parse(self, text: str) -> list[ParsedRow]:
         reader = csv.reader(io.StringIO(text))

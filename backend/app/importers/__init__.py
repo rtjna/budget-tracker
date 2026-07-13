@@ -1,4 +1,5 @@
 from .amex import AmexImporter
+from .barclaycard_csv import BarclaycardCsvImporter
 from .barclays import BarclaysImporter
 from .base import BankImporter, ParsedRow
 from .revolut import RevolutImporter
@@ -6,6 +7,7 @@ from .zkb import ZkbImporter
 
 IMPORTERS: list[BankImporter] = [
     AmexImporter(),
+    BarclaycardCsvImporter(),
     BarclaysImporter(),
     RevolutImporter(),
     ZkbImporter(),
