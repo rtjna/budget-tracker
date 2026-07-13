@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import Coverage from './Coverage'
 import Dashboard from './Dashboard'
@@ -148,6 +148,7 @@ export default function App() {
   const [transferMsg, setTransferMsg] = useState('')
   const [monzoUrl, setMonzoUrl] = useState('')
   const [showAdd, setShowAdd] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   async function detectTransfers() {
     const res = await (await api('/api/transfers/detect', { method: 'POST' })).json()
@@ -312,19 +313,21 @@ export default function App() {
         }}
       >
         <p>Drop bank exports here (CSV, Excel, or Barclays PDF statements), or</p>
-        <label
+        <button
           className="filepick"
           data-tip="Pick bank export files to import — the format and bank are detected automatically, and re-importing the same file is safe (duplicates are skipped)"
+          onClick={() => fileInput.current?.click()}
         >
           choose files
-          <input
-            type="file"
-            accept=".csv,.xlsx,.pdf"
-            multiple
-            hidden
-            onChange={(e) => e.target.files && uploadFiles(e.target.files)}
-          />
-        </label>
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".csv,.xlsx,.pdf"
+          multiple
+          hidden
+          onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+        />
       </section>
 
       {imports.length > 0 && (
@@ -347,10 +350,20 @@ export default function App() {
               key={g.key}
               className="account-card clickable"
               data-tip={`Show all ${g.name} transactions`}
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 setAccountFilter(g.filter)
                 setPage(0)
                 setTab('transactions')
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setAccountFilter(g.filter)
+                  setPage(0)
+                  setTab('transactions')
+                }
               }}
             >
               <strong>
@@ -372,6 +385,7 @@ export default function App() {
       <nav className="tabs">
         <button
           className={tab === 'dashboard' ? 'active' : ''}
+          aria-current={tab === 'dashboard' ? 'page' : undefined}
           onClick={() => setTab('dashboard')}
           data-tip="Monthly spending charts and category breakdowns"
         >
@@ -379,6 +393,7 @@ export default function App() {
         </button>
         <button
           className={tab === 'transactions' ? 'active' : ''}
+          aria-current={tab === 'transactions' ? 'page' : undefined}
           onClick={() => setTab('transactions')}
           data-tip="Browse, search, and filter every transaction; sync and import tools"
         >
@@ -386,6 +401,7 @@ export default function App() {
         </button>
         <button
           className={tab === 'review' ? 'active' : ''}
+          aria-current={tab === 'review' ? 'page' : undefined}
           onClick={() => setTab('review')}
           data-tip="Categorize what's still uncategorized, grouped by merchant"
         >
@@ -393,6 +409,7 @@ export default function App() {
         </button>
         <button
           className={tab === 'coverage' ? 'active' : ''}
+          aria-current={tab === 'coverage' ? 'page' : undefined}
           onClick={() => setTab('coverage')}
           data-tip="Which accounts have data for which months, and where the gaps are"
         >
@@ -527,6 +544,10 @@ export default function App() {
                         data-tip="Linked to its counterpart in another of your accounts — excluded from spending and income"
                       >
                         ⇄ transfer
+                        <span className="sr-only">
+                          — linked to its counterpart in another of your accounts, excluded from
+                          spending and income
+                        </span>
                       </span>
                     )}
                   </td>
@@ -544,6 +565,9 @@ export default function App() {
                           data-tip={SOURCE_TIPS[t.category_source] ?? 'Categorized automatically'}
                         >
                           {t.category_source}
+                          <span className="sr-only">
+                            — {SOURCE_TIPS[t.category_source] ?? 'categorized automatically'}
+                          </span>
                         </span>
                       )}
                     </span>

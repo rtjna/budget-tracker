@@ -76,6 +76,10 @@ export default function Dashboard() {
   const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
   const [recurring, setRecurring] = useState<RecurringItem[]>([])
+  // Loading, loaded-empty, and failed are three different situations —
+  // never show "no data" while a fetch is in flight or after it broke.
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     api('/api/stats/overview?months=12')
@@ -85,9 +89,12 @@ export default function Dashboard() {
         if (data.months.length) setSelected(data.months[data.months.length - 1].month)
         if (data.categories.length) setSelectedCat(data.categories[0].id)
       })
+      .catch(() => setError('Could not load the dashboard — is the backend running?'))
+      .finally(() => setLoading(false))
     api('/api/stats/recurring')
       .then((r) => r.json())
       .then((d) => setRecurring(d.items))
+      .catch(() => {}) // subscriptions tile just stays empty
   }, [])
 
   useEffect(() => {
@@ -95,6 +102,7 @@ export default function Dashboard() {
       api(`/api/stats/month/${selected}`)
         .then((r) => r.json())
         .then(setDetail)
+        .catch(() => setDetail(null))
     }
   }, [selected])
 
@@ -111,7 +119,9 @@ export default function Dashboard() {
     return map
   }, [overview])
 
-  if (!overview || !overview.months.length) {
+  if (error) return <p className="review-intro dash-warning">{error}</p>
+  if (loading || !overview) return <p className="review-intro">Loading…</p>
+  if (!overview.months.length) {
     return <p className="review-intro">No data yet — import some transactions first.</p>
   }
 
@@ -367,7 +377,12 @@ function CategoryView({
                 onClick={() => setSelectedCat(c.id)}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && setSelectedCat(c.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    setSelectedCat(c.id)
+                  }
+                }}
               >
                 <span className="bar-name">{c.name}</span>
                 <span className="bar-track">
@@ -450,6 +465,8 @@ function CategoryTrend({
               <g
                 key={s.month}
                 tabIndex={0}
+                role="img"
+                aria-label={`${monthLong(s.month)}: ${gbp(s.value)}`}
                 onPointerEnter={() => setHover(s.month)}
                 onPointerLeave={() => setHover(null)}
                 onFocus={() => setHover(s.month)}
@@ -475,7 +492,11 @@ function CategoryTrend({
           })}
         </svg>
         {hovered && (
-          <div className="viz-tooltip">
+          <div
+            className={`viz-tooltip ${
+              series.findIndex((s) => s.month === hovered.month) >= series.length / 2 ? 'left' : ''
+            }`}
+          >
             <strong>{monthLong(hovered.month)}</strong>
             <div className="tt-row">
               <span className="tt-key" style={{ background: fill }} />
@@ -522,7 +543,10 @@ function StatTile({
 }) {
   const good = delta != null && (downIsGood ? delta < 0 : delta > 0)
   return (
-    <div className="stat-tile" data-tip={tip}>
+    // tabIndex lets keyboard users reveal the tip bubble; the sr-only copy
+    // carries the same text for screen readers (audit C1).
+    <div className="stat-tile" data-tip={tip} tabIndex={tip ? 0 : undefined}>
+      {tip && <span className="sr-only">{tip}</span>}
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
       {delta != null && Math.abs(delta) >= 1 && (
@@ -644,6 +668,8 @@ function StackedColumns({
               <g
                 key={m.month}
                 tabIndex={0}
+                role="button"
+                aria-label={`${monthLong(m.month)}: ${gbp(m.spending)} spending`}
                 onPointerEnter={() => setHover(m.month)}
                 onPointerLeave={() => {
                   setHover(null)
@@ -652,6 +678,12 @@ function StackedColumns({
                 onFocus={() => setHover(m.month)}
                 onBlur={() => setHover(null)}
                 onClick={() => onSelect(m.month)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onSelect(m.month)
+                  }
+                }}
                 style={{ cursor: 'pointer' }}
               >
                 <rect x={PAD.left + band * mi} y={PAD.top} width={band} height={plotH + PAD.bottom} fill="transparent" />
@@ -693,7 +725,11 @@ function StackedColumns({
           })}
         </svg>
         {hovered && (
-          <div className="viz-tooltip">
+          <div
+            className={`viz-tooltip ${
+              months.findIndex((m) => m.month === hovered.month) >= months.length / 2 ? 'left' : ''
+            }`}
+          >
             <strong>{monthLong(hovered.month)}</strong>
             {stackFor(hovered)
               .slice()
@@ -776,12 +812,14 @@ function IncomeSpending({
   return (
     <>
       <div className="legend">
+        {/* Semantic flow colors, not the categorical ramp — blue already
+            means "top category" in the stacked chart above (audit M5). */}
         <span className="legend-item">
-          <span className="swatch" style={{ background: SERIES_VARS[0] }} />
+          <span className="swatch" style={{ background: 'var(--flow-spending)' }} />
           Spending
         </span>
         <span className="legend-item">
-          <span className="swatch" style={{ background: SERIES_VARS[1] }} />
+          <span className="swatch" style={{ background: 'var(--money-in)' }} />
           Income
         </span>
       </div>
@@ -801,11 +839,19 @@ function IncomeSpending({
               <g
                 key={m.month}
                 tabIndex={0}
+                role="button"
+                aria-label={`${monthLong(m.month)}: income ${gbp(m.income)}, spending ${gbp(m.spending)}`}
                 onPointerEnter={() => setHover(m.month)}
                 onPointerLeave={() => setHover(null)}
                 onFocus={() => setHover(m.month)}
                 onBlur={() => setHover(null)}
                 onClick={() => onSelect(m.month)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onSelect(m.month)
+                  }
+                }}
                 style={{ cursor: 'pointer' }}
               >
                 <rect x={PAD.left + band * mi} y={PAD.top} width={band} height={plotH + PAD.bottom} fill="transparent" />
@@ -815,7 +861,7 @@ function IncomeSpending({
                   width={barW}
                   height={Math.max(y(0) - y(m.spending), 1)}
                   rx={4}
-                  fill={SERIES_VARS[0]}
+                  fill="var(--flow-spending)"
                   opacity={hover && hover !== m.month ? 0.45 : 1}
                 />
                 <rect
@@ -824,7 +870,7 @@ function IncomeSpending({
                   width={barW}
                   height={Math.max(y(0) - y(m.income), 1)}
                   rx={4}
-                  fill={SERIES_VARS[1]}
+                  fill="var(--money-in)"
                   opacity={hover && hover !== m.month ? 0.45 : 1}
                 />
                 <text
@@ -840,15 +886,19 @@ function IncomeSpending({
           })}
         </svg>
         {hovered && (
-          <div className="viz-tooltip">
+          <div
+            className={`viz-tooltip ${
+              months.findIndex((m) => m.month === hovered.month) >= months.length / 2 ? 'left' : ''
+            }`}
+          >
             <strong>{monthLong(hovered.month)}</strong>
             <div className="tt-row">
-              <span className="tt-key" style={{ background: SERIES_VARS[1] }} />
+              <span className="tt-key" style={{ background: 'var(--money-in)' }} />
               <span className="tt-value">{gbp(hovered.income)}</span>
               <span className="tt-label">income</span>
             </div>
             <div className="tt-row">
-              <span className="tt-key" style={{ background: SERIES_VARS[0] }} />
+              <span className="tt-key" style={{ background: 'var(--flow-spending)' }} />
               <span className="tt-value">{gbp(hovered.spending)}</span>
               <span className="tt-label">spending</span>
             </div>

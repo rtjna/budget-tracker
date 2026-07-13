@@ -14,8 +14,8 @@
 }
 
 .dropzone.dragging {
-  border-color: #646cff;
-  background: #646cff11;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .dropzone p {
@@ -23,9 +23,13 @@
 }
 
 .filepick {
-  color: #646cff;
+  color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
 }
 
 .import-results p {
@@ -55,11 +59,12 @@
 }
 
 .coverage {
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 
 .filters {
   display: flex;
+  flex-wrap: wrap; /* eight controls must not overflow on narrow screens */
   gap: 0.75rem;
   margin-bottom: 1rem;
 }
@@ -97,8 +102,14 @@
   white-space: nowrap;
 }
 
+/* Money in and out both get a color (never green-vs-nothing), AA in both
+   themes; the sign remains as the color-independent cue. */
 .tx-table .in {
-  color: #2a9d4a;
+  color: var(--money-in);
+}
+
+.tx-table .out {
+  color: var(--money-out);
 }
 
 .pager {
@@ -118,8 +129,9 @@
 }
 
 .tabs button.active {
-  border-color: #646cff;
-  color: #646cff;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700; /* a non-color cue for the active tab */
 }
 
 .checkbox {
@@ -151,12 +163,12 @@
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
   border: 1px solid #8885;
-  opacity: 0.7;
+  color: var(--text-muted); /* muted via token, not stacked opacity */
 }
 
 .review-intro {
   font-size: 0.95rem;
-  opacity: 0.85;
+  color: var(--text-secondary);
 }
 
 .review-row {
@@ -177,7 +189,7 @@
 
 .review-meta {
   font-size: 0.82rem;
-  opacity: 0.7;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

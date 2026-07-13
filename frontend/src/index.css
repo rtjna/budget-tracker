@@ -62,3 +62,83 @@ button:disabled {
   transform: translate(-50%, 0);
   transition-delay: 0.3s; /* no flicker while sweeping the cursor across the UI */
 }
+
+/* Design tokens — one system for the whole app (audit design-H1). The chart
+   palette, semantic money colors, and the single accent all live here;
+   .viz-root inherits them like everything else. Light values first, dark via
+   media query. --text-muted light was darkened for AA contrast (audit H3);
+   --series-4 is now cyan with a dark-mode step — the old #008300 green
+   collided with series-2 and vanished on dark surfaces (audit M4). */
+:root {
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #6d6b65;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --accent: #2a78d6;
+  --money-in: #157139;
+  --money-out: #b3341f;
+  --flow-spending: #64748b;
+  --delta-good: #006300;
+  --delta-bad: #d03b3b;
+  --series-1: #2a78d6;
+  --series-2: #1baf7a;
+  --series-3: #eda100;
+  --series-4: #0b7fa8;
+  --series-5: #4a3aa7;
+  --series-6: #e34948;
+  --series-7: #e87ba4;
+  --series-8: #eb6834;
+  --series-uncat: #a8a69e; /* neutral gray: missing data, not a category */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --accent: #3987e5;
+    --money-in: #4ec77d;
+    --money-out: #f08577;
+    --flow-spending: #8b9bb1;
+    --delta-good: #0ca30c;
+    --delta-bad: #e66767;
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    --series-3: #c98500;
+    --series-4: #2fa7d4;
+    --series-5: #9085e9;
+    --series-6: #e66767;
+    --series-7: #d55181;
+    --series-8: #d95926;
+    --series-uncat: #6f6e67;
+  }
+}
+
+/* Keyboard focus is always visible (audit C3). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chart-svg g:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Screen-reader-only text: the accessible twin of the data-tip bubbles. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
