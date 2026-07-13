@@ -155,12 +155,17 @@ def llm_status():
 
 @app.post("/api/llm/categorize")
 def llm_categorize(db: Session = Depends(get_db), max_merchants: int = Query(default=200, le=1000)):
+    import anthropic
+
     from .llm import categorize_merchants
 
     try:
         return categorize_merchants(db, max_merchants=max_merchants)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
+    except anthropic.APIError as e:
+        # Progress is committed per batch, so a mid-run failure loses nothing.
+        raise HTTPException(status_code=502, detail=f"Claude API error: {e}")
 
 
 @app.post("/api/imports")

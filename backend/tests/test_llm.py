@@ -88,3 +88,54 @@ def test_prompt_contains_no_amounts():
     categorize_merchants(db, client=client)
     sent = str(client.messages.calls[0])
     assert "-5" not in sent and "amount" not in sent.lower()
+
+
+class GrammarTimeoutMessages(FakeMessages):
+    """Fails with the transient structured-output error N times, then works."""
+
+    def __init__(self, result, failures):
+        super().__init__(result)
+        self.failures = failures
+
+    def parse(self, **kwargs):
+        import anthropic
+        import httpx
+
+        if self.failures > 0:
+            self.failures -= 1
+            self.calls.append(kwargs)
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError(
+                "Grammar compilation timed out",
+                response=httpx.Response(400, request=request),
+                body={"error": {"message": "Grammar compilation timed out"}},
+            )
+        return super().parse(**kwargs)
+
+
+def test_grammar_timeout_is_retried(monkeypatch):
+    monkeypatch.setattr("app.llm.time.sleep", lambda s: None)
+    db, groceries, _ = make_db()
+    client = FakeClient(BatchResult(assignments=[
+        MerchantAssignment(merchant="OCADO RETAIL LTD", category="Groceries"),
+        MerchantAssignment(merchant="MYSTERY SHOP 42", category="UNSURE"),
+        MerchantAssignment(merchant="BLANK STREET LONDON", category="UNSURE"),
+    ]))
+    client.messages = GrammarTimeoutMessages(client.messages.result, failures=2)
+
+    stats = categorize_merchants(db, client=client)
+    assert stats["categorized"] == 1
+    assert len(client.messages.calls) == 3  # two timeouts, then success
+
+
+def test_grammar_timeout_gives_up_after_retries(monkeypatch):
+    import anthropic
+    import pytest
+
+    monkeypatch.setattr("app.llm.time.sleep", lambda s: None)
+    db, *_ = make_db()
+    client = FakeClient(BatchResult(assignments=[]))
+    client.messages = GrammarTimeoutMessages(client.messages.result, failures=10)
+
+    with pytest.raises(anthropic.BadRequestError):
+        categorize_merchants(db, client=client)

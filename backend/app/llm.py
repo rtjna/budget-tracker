@@ -8,6 +8,7 @@ is unsure about leave the merchant in the human review queue.
 """
 
 import os
+import time
 
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -20,6 +21,24 @@ MODEL = os.environ.get("LLM_MODEL", "claude-opus-4-8")
 BATCH_SIZE = 40
 FEW_SHOT_EXAMPLES = 60
 UNSURE = "UNSURE"
+
+# The first structured-output request compiles the schema's grammar
+# server-side and can time out; the compiled grammar is cached, so a
+# short-delay retry normally succeeds.
+GRAMMAR_TIMEOUT = "Grammar compilation timed out"
+GRAMMAR_RETRIES = 2
+
+
+def _parse_batch(client, **kwargs):
+    import anthropic
+
+    for attempt in range(GRAMMAR_RETRIES + 1):
+        try:
+            return client.messages.parse(**kwargs)
+        except anthropic.BadRequestError as e:
+            if GRAMMAR_TIMEOUT not in str(e) or attempt == GRAMMAR_RETRIES:
+                raise
+            time.sleep(2 * (attempt + 1))
 
 
 class MerchantAssignment(BaseModel):
@@ -112,7 +131,8 @@ def categorize_merchants(db: Session, max_merchants: int = 200, client=None) -> 
     for start in range(0, len(pending), BATCH_SIZE):
         batch = pending[start : start + BATCH_SIZE]
         batch_merchants = {m for m, _ in batch}
-        response = client.messages.parse(
+        response = _parse_batch(
+            client,
             model=MODEL,
             max_tokens=16000,
             system=system,

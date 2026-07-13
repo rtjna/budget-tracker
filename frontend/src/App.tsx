@@ -691,6 +691,8 @@ function AskClaude({ onDone }: { onDone: () => void }) {
           `(${data.transactions} transactions), ${data.unsure} left for you`,
       )
       onDone()
+    } catch {
+      setResult('LLM categorization failed — check the server log and try again')
     } finally {
       setBusy(false)
     }
