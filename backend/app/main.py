@@ -418,7 +418,9 @@ def list_transactions(
     search: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     uncategorized: bool = False,
+    order: str = Query(default="date_desc", pattern="^date_(asc|desc)$"),
     limit: int = Query(default=50, le=500),
     offset: int = 0,
 ):
@@ -440,15 +442,18 @@ def list_transactions(
         query = query.where(models.Transaction.date >= date_from)
     if date_to is not None:
         query = query.where(models.Transaction.date <= date_to)
+    if month is not None:
+        query = query.where(func.strftime("%Y-%m", models.Transaction.date) == month)
     if uncategorized:
         query = query.where(models.Transaction.category_id.is_(None))
 
     total = db.scalar(select(func.count()).select_from(query.subquery()))
-    txs = db.scalars(
-        query.order_by(models.Transaction.date.desc(), models.Transaction.id.desc())
-        .limit(limit)
-        .offset(offset)
-    ).all()
+    ordering = (
+        (models.Transaction.date.asc(), models.Transaction.id.asc())
+        if order == "date_asc"
+        else (models.Transaction.date.desc(), models.Transaction.id.desc())
+    )
+    txs = db.scalars(query.order_by(*ordering).limit(limit).offset(offset)).all()
     return {
         "total": total,
         "items": [

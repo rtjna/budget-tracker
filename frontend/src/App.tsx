@@ -145,6 +145,9 @@ export default function App() {
   // provider's accounts (e.g. every Revolut currency at once).
   const [accountFilter, setAccountFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
+  const [monthFilter, setMonthFilter] = useState('')
+  const [months, setMonths] = useState<string[]>([])
+  const [sortAsc, setSortAsc] = useState(false)
   const [onlyUncategorized, setOnlyUncategorized] = useState(false)
   const [review, setReview] = useState<ReviewGroup[]>([])
   const [reviewTotal, setReviewTotal] = useState(0)
@@ -211,12 +214,14 @@ export default function App() {
   }
 
   const loadStatic = useCallback(async () => {
-    const [acc, cats] = await Promise.all([
+    const [acc, cats, cov] = await Promise.all([
       api('/api/accounts').then((r) => r.json()),
       api('/api/categories').then((r) => r.json()),
+      api('/api/stats/coverage').then((r) => r.json()),
     ])
     setAccounts(acc)
     setCategories(cats)
+    setMonths(cov.months ?? [])
   }, [])
 
   const loadTxs = useCallback(async () => {
@@ -227,12 +232,14 @@ export default function App() {
     if (search) params.set('search', search)
     if (accountFilter.startsWith('p:')) params.set('provider', accountFilter.slice(2))
     else if (accountFilter !== '') params.set('account_id', accountFilter)
+    if (monthFilter) params.set('month', monthFilter)
+    if (sortAsc) params.set('order', 'date_asc')
     if (categoryFilter !== '') params.set('category_id', String(categoryFilter))
     if (onlyUncategorized) params.set('uncategorized', 'true')
     const data = await (await api(`/api/transactions?${params}`)).json()
     setTxs(data.items)
     setTotal(data.total)
-  }, [page, search, accountFilter, categoryFilter, onlyUncategorized])
+  }, [page, search, accountFilter, categoryFilter, monthFilter, sortAsc, onlyUncategorized])
 
   const loadReview = useCallback(async () => {
     const data = await (await api('/api/review')).json()
@@ -467,6 +474,29 @@ export default function App() {
               }}
               placeholder="All categories"
             />
+            <select
+              value={monthFilter}
+              onChange={(e) => {
+                setMonthFilter(e.target.value)
+                setPage(0)
+              }}
+            >
+              <option value="">All months</option>
+              {[...months].reverse().map((m) => (
+                <option key={m} value={m}>
+                  {new Date(m + '-01').toLocaleString('en-GB', { month: 'long', year: 'numeric' })}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => {
+                setSortAsc(!sortAsc)
+                setPage(0)
+              }}
+              data-tip="Flip the date order of the list"
+            >
+              {sortAsc ? '↑ Oldest first' : '↓ Newest first'}
+            </button>
             <label className="checkbox">
               <input
                 type="checkbox"

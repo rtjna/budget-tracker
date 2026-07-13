@@ -81,3 +81,23 @@ def test_accounts_report_last_imported_and_provider_filter():
     data = client.get("/api/transactions?provider=amex").json()
     assert data["total"] == 1 and data["items"][0]["description"] == "TESCO"
     assert client.get("/api/transactions?provider=manual").json()["total"] == 1
+
+
+def test_transactions_month_filter_and_order():
+    from tests.test_categories import make_client
+
+    client = make_client()
+    for d, desc in [("2026-06-15", "JUNE THING"), ("2026-07-01", "JULY FIRST"),
+                    ("2026-07-20", "JULY LAST")]:
+        body = {"account_id": 0, "date": d, "description": desc, "amount": -1.0}
+        assert client.post("/api/transactions", json=body).status_code == 200
+
+    july = client.get("/api/transactions?month=2026-07").json()
+    assert july["total"] == 2
+    assert [t["description"] for t in july["items"]] == ["JULY LAST", "JULY FIRST"]
+
+    asc = client.get("/api/transactions?month=2026-07&order=date_asc").json()
+    assert [t["description"] for t in asc["items"]] == ["JULY FIRST", "JULY LAST"]
+
+    assert client.get("/api/transactions?month=07/2026").status_code == 422
+    assert client.get("/api/transactions?order=amount").status_code == 422
