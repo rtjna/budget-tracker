@@ -113,3 +113,31 @@ def test_trip_api_crud_and_assign():
 
     assert client.delete(f"/api/trips/{tid}").status_code == 200
     assert all(t["name"] != "Japan" for t in client.get("/api/trips").json())
+
+
+def test_review_verdicts_persist_and_reopen_without_llm():
+    from app.trips import stored_suggestions
+
+    db, trip = make_db()
+    assert stored_suggestions(db, trip) is None  # never reviewed
+
+    cands = {t.description: t.id for t in candidates(db, trip)}
+    review(db, trip, client=FakeClient(TripReview(verdicts=[
+        TripVerdict(id=cands["BA FLIGHTS"], belongs=True),
+        TripVerdict(id=cands["RAMEN TOKYO"], belongs=True),
+        TripVerdict(id=cands["NETFLIX"], belongs=False),
+        TripVerdict(id=cands["HOTEL REFUND"], belongs=True),
+    ])))
+
+    saved = stored_suggestions(db, trip)  # no client involved
+    assert saved is not None and saved["stored"] is True
+    by_id = {s["id"]: s["belongs"] for s in saved["suggestions"]}
+    assert by_id[cands["BA FLIGHTS"]] is True
+    assert by_id[cands["NETFLIX"]] is False
+
+    # A re-review replaces the verdicts rather than duplicating them.
+    review(db, trip, client=FakeClient(TripReview(verdicts=[
+        TripVerdict(id=cands["NETFLIX"], belongs=True),
+    ])))
+    saved = stored_suggestions(db, trip)
+    assert {s["id"] for s in saved["suggestions"]} == set(cands.values())

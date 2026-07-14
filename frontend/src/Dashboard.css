@@ -388,3 +388,8 @@
 .trip-suggest td {
   vertical-align: middle;
 }
+
+.tt-pct {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}

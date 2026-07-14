@@ -388,9 +388,25 @@ def delete_trip(trip_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Trip not found")
     for tx in db.scalars(select(models.Transaction).where(models.Transaction.trip_id == trip_id)):
         tx.trip_id = None
+    for v in db.scalars(
+        select(models.TripReviewVerdict).where(models.TripReviewVerdict.trip_id == trip_id)
+    ):
+        db.delete(v)
     db.delete(trip)
     db.commit()
     return {"deleted": trip_id}
+
+
+@app.get("/api/trips/{trip_id}/suggestions")
+def get_trip_suggestions(trip_id: int, db: Session = Depends(get_db)):
+    """The persisted checklist from the last review — instant, no LLM.
+    suggestions is null when the trip has never been reviewed."""
+    from .trips import stored_suggestions
+
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return stored_suggestions(db, trip) or {"llm_used": None, "stored": False, "suggestions": None}
 
 
 @app.post("/api/trips/{trip_id}/suggest")

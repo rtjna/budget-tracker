@@ -376,6 +376,7 @@ function TripsView({
     id: number
     name: string
     llm: boolean
+    stored: boolean
     suggestions: TripSuggestion[]
   } | null>(null)
   const [checked, setChecked] = useState<Set<number>>(new Set())
@@ -391,8 +392,34 @@ function TripsView({
     load()
   }, [])
 
-  async function suggest(id: number, name: string) {
+  function openChecklist(id: number, name: string, data: {
+    llm_used: boolean | null
+    stored: boolean
+    suggestions: TripSuggestion[]
+  }) {
+    setReviewing({
+      id,
+      name,
+      llm: data.llm_used !== false,
+      stored: data.stored,
+      suggestions: data.suggestions,
+    })
+    setChecked(
+      new Set(data.suggestions.filter((s) => s.belongs || s.assigned).map((s) => s.id)),
+    )
+  }
+
+  async function suggest(id: number, name: string, fresh = false) {
     setError('')
+    if (!fresh) {
+      // The last review is persisted server-side — reopen it instantly.
+      const res = await api(`/api/trips/${id}/suggestions`)
+      const data = await res.json()
+      if (res.ok && data.suggestions) {
+        openChecklist(id, name, data)
+        return
+      }
+    }
     setBusy('Claude is reviewing candidate payments (window ± booking period)…')
     try {
       const res = await api(`/api/trips/${id}/suggest`, { method: 'POST' })
@@ -401,8 +428,7 @@ function TripsView({
         setError(data.detail ?? 'Review failed')
         return
       }
-      setReviewing({ id, name, llm: data.llm_used, suggestions: data.suggestions })
-      setChecked(new Set(data.suggestions.filter((s: TripSuggestion) => s.belongs || s.assigned).map((s: TripSuggestion) => s.id)))
+      openChecklist(id, name, data)
     } catch {
       setError('Review failed — check the server log.')
     } finally {
@@ -423,7 +449,7 @@ function TripsView({
       return
     }
     setForm({ name: '', start: '', end: '' })
-    await suggest(data.id, data.name)
+    await suggest(data.id, data.name, true)
   }
 
   async function confirm() {
@@ -497,7 +523,11 @@ function TripsView({
         <div className="chart-card">
           <h3>
             {reviewing.name} — confirm what belongs ({checked.size} selected
-            {reviewing.llm ? ', pre-ticked by Claude' : ', pre-ticked by heuristic — no API key'})
+            {reviewing.stored
+              ? ', from the saved review'
+              : reviewing.llm
+                ? ', pre-ticked by Claude'
+                : ', pre-ticked by heuristic — no API key'})
           </h3>
           <table className="mini-table trip-suggest">
             <tbody>
@@ -524,6 +554,12 @@ function TripsView({
             </tbody>
           </table>
           <button onClick={confirm}>✓ Save trip assignment</button>{' '}
+          <button
+            onClick={() => suggest(reviewing.id, reviewing.name, true)}
+            data-tip="Discard the saved verdicts and have Claude review all candidates again (uses your API key)"
+          >
+            ↻ Re-ask Claude
+          </button>{' '}
           <button onClick={() => setReviewing(null)}>Cancel</button>
         </div>
       )}
@@ -546,7 +582,7 @@ function TripsView({
                 <button
                   className="table-toggle"
                   onClick={() => suggest(t.id, t.name)}
-                  data-tip="Re-run the review — useful after importing new statements covering the trip"
+                  data-tip="Reopen the saved checklist (instant); new candidates since the last review are included"
                 >
                   review payments
                 </button>{' '}
@@ -1136,7 +1172,12 @@ function StackedColumns({
                 >
                   <span className="tt-key" style={{ background: segFill(seg.id) }} />
                   <span className="tt-value">{gbp(seg.value)}</span>
-                  <span className="tt-label">{segName(seg.id)}</span>
+                  <span className="tt-label">
+                    {segName(seg.id)}
+                    {hovered.spending > 0 && (
+                      <span className="tt-pct"> · {((seg.value / hovered.spending) * 100).toFixed(0)}%</span>
+                    )}
+                  </span>
                 </div>
               ))}
             {stackFor(hovered).negatives.map((seg) => (

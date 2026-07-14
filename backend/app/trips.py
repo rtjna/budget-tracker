@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from .llm import MODEL, _make_client, _parse_batch
-from .models import Category, Transaction, Trip
+from .models import Category, Transaction, Trip, TripReviewVerdict
 from .stats import GBP_RATES, to_gbp
 
 BEFORE_DAYS = 90
@@ -141,20 +141,55 @@ def review(db: Session, trip: Trip, client=None) -> dict:
         belongs = verdicts.get(t.id) if client is not None else None
         if belongs is None:
             belongs = _heuristic(trip, t, travel_id)
-        suggestions.append(
-            {
-                "id": t.id,
-                "date": t.date,
-                "description": t.description,
-                "amount": float(t.amount),
-                "currency": t.account.currency,
-                "category_id": t.category_id,
-                "in_window": trip.start_date <= t.date <= trip.end_date,
-                "assigned": t.trip_id == trip.id,
-                "belongs": belongs,
-            }
+        suggestions.append(_suggestion(trip, t, belongs))
+
+    # Persist the verdicts so the checklist survives navigation and can be
+    # reopened instantly without another API pass.
+    for old in db.scalars(
+        select(TripReviewVerdict).where(TripReviewVerdict.trip_id == trip.id)
+    ):
+        db.delete(old)
+    for s in suggestions:
+        db.add(
+            TripReviewVerdict(trip_id=trip.id, transaction_id=s["id"], belongs=s["belongs"])
         )
-    return {"llm_used": llm_used, "suggestions": suggestions}
+    db.commit()
+    return {"llm_used": llm_used, "stored": False, "suggestions": suggestions}
+
+
+def _suggestion(trip: Trip, t: Transaction, belongs: bool) -> dict:
+    return {
+        "id": t.id,
+        "date": t.date,
+        "description": t.description,
+        "amount": float(t.amount),
+        "currency": t.account.currency,
+        "category_id": t.category_id,
+        "in_window": trip.start_date <= t.date <= trip.end_date,
+        "assigned": t.trip_id == trip.id,
+        "belongs": belongs,
+    }
+
+
+def stored_suggestions(db: Session, trip: Trip) -> dict | None:
+    """The last review's checklist, rebuilt from persisted verdicts — no LLM
+    call. None when this trip has never been reviewed. Candidates that
+    appeared since the review (new imports) fall back to the heuristic."""
+    stored = {
+        v.transaction_id: v.belongs
+        for v in db.scalars(
+            select(TripReviewVerdict).where(TripReviewVerdict.trip_id == trip.id)
+        )
+    }
+    if not stored:
+        return None
+    categories = {c.id: c.name for c in db.scalars(select(Category))}
+    travel_id = next((cid for cid, n in categories.items() if n == "Travel"), None)
+    suggestions = [
+        _suggestion(trip, t, stored.get(t.id, _heuristic(trip, t, travel_id)))
+        for t in candidates(db, trip)
+    ]
+    return {"llm_used": None, "stored": True, "suggestions": suggestions}
 
 
 def trip_stats(db: Session, trip: Trip) -> dict:

@@ -1,6 +1,15 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -56,6 +65,20 @@ class Trip(Base):
     name: Mapped[str] = mapped_column(String, unique=True)
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
+
+
+class TripReviewVerdict(Base):
+    """Persisted outcome of the last suggestion review for a trip, so the
+    confirmation checklist survives navigation without re-asking Claude."""
+
+    __tablename__ = "trip_review_verdicts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id"), index=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id"))
+    belongs: Mapped[bool] = mapped_column(Boolean)
+
+    __table_args__ = (UniqueConstraint("trip_id", "transaction_id"),)
 
 
 class Transaction(Base):
