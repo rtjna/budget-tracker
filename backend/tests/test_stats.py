@@ -243,3 +243,27 @@ def test_year_summary_totals_shares_and_year_list():
     assert year_summary(db)["year"] == 2026
     assert year_summary(db, 1999)["year"] == 2026
     assert year_summary(db, 2025)["spending"] == 10.0
+
+
+def test_negative_income_reduces_income_not_spending():
+    """A back-paid tax bill categorized Income offsets income (mirror of
+    refund semantics), and never appears as spending anywhere."""
+    db, gbp, _, groceries, _ = make_db()
+    income_id = db.query(Category).filter_by(name="Income").one().id
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-10.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 20), "SALARY", "3000.00", cat=income_id)
+    add(db, gbp, date(2026, 6, 26), "HMRC SHIPLEY", "-500.00", cat=income_id)
+    db.commit()
+
+    data = monthly_overview(db)
+    (june,) = [m for m in data["months"] if m["month"] == "2026-06"]
+    assert june["income"] == 2500.0  # 3000 - 500 back-paid tax
+    assert june["spending"] == 10.0  # tax is not spending
+    assert all(c["name"] != "Income" for c in data["categories"])
+
+    detail = month_detail(db, "2026-06")
+    assert all(c["name"] != "Income" for c in detail["categories"])
+
+    from app.stats import year_summary
+    s = year_summary(db, 2026)
+    assert s["income"] == 2500.0 and s["spending"] == 10.0

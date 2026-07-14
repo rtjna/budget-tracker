@@ -42,6 +42,17 @@ def _is_income(tx, income_id) -> bool:
     return tx.category_id == income_id or tx.category_id is None
 
 
+def _income_category(tx, income_id) -> bool:
+    """Explicitly categorized Income in a real bank account — such rows hit
+    the income total with their sign (outflows like back-paid tax reduce it),
+    never the spending side."""
+    return (
+        income_id is not None
+        and tx.category_id == income_id
+        and tx.account.provider != "splitwise"
+    )
+
+
 def to_gbp(amount: Decimal, currency: str) -> Decimal:
     """Convert to GBP. Refuses unknown currencies loudly — a silent 1:1
     fallback would misstate totals by an order of magnitude (audit H1).
@@ -137,7 +148,12 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
         gbp = to_gbp(tx.amount, tx.account.currency)
         month = tx.date.strftime("%Y-%m")
         bucket = by_month[month]
-        if gbp < 0:
+        if _income_category(tx, income_id):
+            # Signed on purpose: the mirror of refund semantics. An outflow
+            # categorized Income (e.g. a back-paid income tax bill) reduces
+            # income rather than counting as spending.
+            bucket["income"] += gbp
+        elif gbp < 0:
             bucket["spending"] += -gbp
             bucket["by_category"][tx.category_id] += -gbp
         elif _is_income(tx, income_id):
@@ -211,7 +227,9 @@ def year_summary(db: Session, year: int | None = None) -> dict:
         if tx.date.year != year:
             continue
         gbp = to_gbp(tx.amount, tx.account.currency)
-        if gbp < 0:
+        if _income_category(tx, income_id):
+            income += gbp  # signed: back-paid tax reduces income
+        elif gbp < 0:
             spending += -gbp
             by_category[tx.category_id] += -gbp
         elif _is_income(tx, income_id):
@@ -254,6 +272,7 @@ def month_detail(db: Session, month: str) -> dict:
         t
         for t in _spending_transactions(db)
         if t.date.strftime("%Y-%m") == month
+        and not _income_category(t, income_id)  # income-side rows, both signs
         and (t.amount < 0 or not _is_income(t, income_id))
     ]
     categories = {c.id: c.name for c in db.scalars(select(Category))}
