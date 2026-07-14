@@ -149,6 +149,7 @@ def review(db: Session, trip: Trip, client=None) -> dict:
         select(TripReviewVerdict).where(TripReviewVerdict.trip_id == trip.id)
     ):
         db.delete(old)
+    db.flush()  # deletes must hit before the re-inserts of the same keys
     for s in suggestions:
         db.add(
             TripReviewVerdict(trip_id=trip.id, transaction_id=s["id"], belongs=s["belongs"])
