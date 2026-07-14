@@ -51,13 +51,16 @@ const gbp = (n: number, digits = 0) =>
   })
 
 const monthLabel = (m: string) => {
+  if (m === 'average') return 'Avg'
   const d = new Date(m + '-01')
   const name = d.toLocaleString('en-GB', { month: 'short' })
   return d.getMonth() === 0 ? `${name} ’${String(d.getFullYear()).slice(2)}` : name
 }
 
 const monthLong = (m: string) =>
-  new Date(m + '-01').toLocaleString('en-GB', { month: 'long', year: 'numeric' })
+  m === 'average'
+    ? 'Average month (last 12)'
+    : new Date(m + '-01').toLocaleString('en-GB', { month: 'long', year: 'numeric' })
 
 function niceTicks(max: number): number[] {
   if (max <= 0) return [0]
@@ -71,7 +74,7 @@ function niceTicks(max: number): number[] {
 
 export default function Dashboard() {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [view, setView] = useState<'time' | 'category' | 'year'>('time')
+  const [view, setView] = useState<'time' | 'category' | 'year' | 'trips'>('time')
   const [selected, setSelected] = useState('')
   const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
@@ -98,7 +101,7 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
-    if (selected) {
+    if (selected && selected !== 'average') {
       api(`/api/stats/month/${selected}`)
         .then((r) => r.json())
         .then(setDetail)
@@ -119,6 +122,23 @@ export default function Dashboard() {
     return map
   }, [overview])
 
+  const avgMonth = useMemo<MonthRow | null>(() => {
+    const ms = overview?.months ?? []
+    if (!ms.length) return null
+    const n = ms.length
+    const by: Record<string, number> = {}
+    for (const m of ms)
+      for (const [k, v] of Object.entries(m.by_category)) by[k] = (by[k] ?? 0) + v / n
+    return {
+      month: 'average',
+      spending: ms.reduce((s, m) => s + m.spending, 0) / n,
+      income: ms.reduce((s, m) => s + m.income, 0) / n,
+      invested: ms.reduce((s, m) => s + m.invested, 0) / n,
+      net: ms.reduce((s, m) => s + m.net, 0) / n,
+      by_category: by,
+    }
+  }, [overview])
+
   if (error) return <p className="review-intro dash-warning">{error}</p>
   if (loading || !overview) return <p className="review-intro">Loading…</p>
   if (!overview.months.length) {
@@ -126,9 +146,13 @@ export default function Dashboard() {
   }
 
   const months = overview.months
-  const current = months.find((m) => m.month === selected) ?? months[months.length - 1]
+  const chartMonths = avgMonth ? [...months, avgMonth] : months
+  const current =
+    (selected === 'average' ? avgMonth : null) ??
+    months.find((m) => m.month === selected) ??
+    months[months.length - 1]
   const prevIdx = months.indexOf(current) - 1
-  const prev = prevIdx >= 0 ? months[prevIdx] : null
+  const prev = prevIdx >= 0 ? months[prevIdx] : null // average has no delta
   const activeSubs = recurring.filter((r) => r.active)
   const subsMonthly = activeSubs.reduce((s, r) => s + r.monthly_equivalent, 0)
 
@@ -142,6 +166,10 @@ export default function Dashboard() {
 
   if (view === 'year') {
     return <YearView setView={setView} slotFill={slotFill} />
+  }
+
+  if (view === 'trips') {
+    return <TripsView setView={setView} slotFill={slotFill} />
   }
 
   if (view === 'category') {
@@ -163,6 +191,7 @@ export default function Dashboard() {
         <label>
           Month{' '}
           <select value={selected} onChange={(e) => setSelected(e.target.value)}>
+            {avgMonth && <option value="average">Average month (last 12)</option>}
             {[...months].reverse().map((m) => (
               <option key={m.month} value={m.month}>
                 {monthLong(m.month)}
@@ -212,7 +241,7 @@ export default function Dashboard() {
 
       <ChartCard title="Spending by month">
         <StackedColumns
-          months={months}
+          months={chartMonths}
           slots={slots}
           seriesName={seriesName}
           selected={current.month}
@@ -221,26 +250,44 @@ export default function Dashboard() {
       </ChartCard>
 
       <ChartCard title="Income vs spending">
-        <IncomeSpending months={months} selected={current.month} onSelect={setSelected} />
+        <IncomeSpending months={chartMonths} selected={current.month} onSelect={setSelected} />
       </ChartCard>
 
       <div className="dash-split">
         <ChartCard title={`Categories — ${monthLong(current.month)}`}>
-          {detail && <BarList rows={detail.categories} fill={slotFill} />}
+          {selected === 'average' && avgMonth ? (
+            <BarList
+              rows={Object.entries(avgMonth.by_category)
+                .map(([cid, v]) => ({
+                  id: Number(cid),
+                  name: Number(cid) === 0 ? 'Uncategorized' : seriesName(Number(cid)),
+                  total: v,
+                }))
+                .filter((c) => c.total > 0)
+                .sort((a, b) => b.total - a.total)}
+              fill={slotFill}
+            />
+          ) : (
+            detail && <BarList rows={detail.categories} fill={slotFill} />
+          )}
         </ChartCard>
         <div className="chart-card">
           <h3>Top merchants — {monthLong(current.month)}</h3>
-          <table className="mini-table">
-            <tbody>
-              {detail?.merchants.slice(0, 10).map((m) => (
-                <tr key={m.merchant}>
-                  <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
-                  <td className="num muted">{m.count}×</td>
-                  <td className="num">{gbp(m.total, 2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {selected === 'average' ? (
+            <p className="muted">Merchants are per real month — pick one from the selector.</p>
+          ) : (
+            <table className="mini-table">
+              <tbody>
+                {detail?.merchants.slice(0, 10).map((m) => (
+                  <tr key={m.merchant}>
+                    <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
+                    <td className="num muted">{m.count}×</td>
+                    <td className="num">{gbp(m.total, 2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -292,6 +339,234 @@ export default function Dashboard() {
   )
 }
 
+type TripStats = {
+  id: number
+  name: string
+  start_date: string
+  end_date: string
+  days: number
+  transactions: number
+  total: number
+  per_day: number
+  by_category: CategoryTotal[]
+}
+
+type TripSuggestion = {
+  id: number
+  date: string
+  description: string
+  amount: number
+  currency: string
+  category_id: number | null
+  in_window: boolean
+  assigned: boolean
+  belongs: boolean
+}
+
+function TripsView({
+  setView,
+  slotFill,
+}: {
+  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
+  slotFill: (id: number) => string
+}) {
+  const [trips, setTrips] = useState<TripStats[] | null>(null)
+  const [form, setForm] = useState({ name: '', start: '', end: '' })
+  const [reviewing, setReviewing] = useState<{
+    id: number
+    name: string
+    llm: boolean
+    suggestions: TripSuggestion[]
+  } | null>(null)
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+
+  const load = () =>
+    api('/api/trips')
+      .then((r) => r.json())
+      .then(setTrips)
+      .catch(() => setError('Could not load trips.'))
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function suggest(id: number, name: string) {
+    setError('')
+    setBusy('Claude is reviewing candidate payments (window ± booking period)…')
+    try {
+      const res = await api(`/api/trips/${id}/suggest`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.detail ?? 'Review failed')
+        return
+      }
+      setReviewing({ id, name, llm: data.llm_used, suggestions: data.suggestions })
+      setChecked(new Set(data.suggestions.filter((s: TripSuggestion) => s.belongs || s.assigned).map((s: TripSuggestion) => s.id)))
+    } catch {
+      setError('Review failed — check the server log.')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function createTrip() {
+    setError('')
+    const res = await api('/api/trips', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: form.name, start_date: form.start, end_date: form.end }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      setError(data.detail ?? 'Could not create the trip')
+      return
+    }
+    setForm({ name: '', start: '', end: '' })
+    await suggest(data.id, data.name)
+  }
+
+  async function confirm() {
+    if (!reviewing) return
+    const add = [...checked]
+    const remove = reviewing.suggestions
+      .filter((s) => s.assigned && !checked.has(s.id))
+      .map((s) => s.id)
+    const res = await api(`/api/trips/${reviewing.id}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add, remove }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      setError(data?.detail ?? 'Assignment failed')
+      return
+    }
+    setReviewing(null)
+    await load()
+  }
+
+  async function removeTrip(t: TripStats) {
+    if (!confirm2(`Delete trip “${t.name}”? Its ${t.transactions} transactions stay, just unassigned.`)) return
+    await api(`/api/trips/${t.id}`, { method: 'DELETE' })
+    await load()
+  }
+  const confirm2 = (msg: string) => window.confirm(msg)
+
+  return (
+    <section className="dash viz-root">
+      <div className="dash-filters">
+        <ViewSwitch view="trips" setView={setView} />
+        <span className="dash-note">
+          Trip membership is separate from categories — assigning a payment to a trip never
+          changes the regular stats
+        </span>
+      </div>
+
+      <div className="trip-form">
+        <input
+          placeholder="Trip name (e.g. Japan)"
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+        />
+        <input
+          type="date"
+          value={form.start}
+          onChange={(e) => setForm({ ...form, start: e.target.value })}
+          data-tip="First day of the trip"
+        />
+        <input
+          type="date"
+          value={form.end}
+          onChange={(e) => setForm({ ...form, end: e.target.value })}
+          data-tip="Last day of the trip"
+        />
+        <button
+          onClick={createTrip}
+          disabled={!form.name.trim() || !form.start || !form.end || !!busy}
+          data-tip="Create the trip, then Claude reviews every payment in the window (plus 3 months before for bookings, 1 month after for late charges) and suggests which belong"
+        >
+          + New trip
+        </button>
+      </div>
+
+      {busy && <p className="review-intro">{busy}</p>}
+      {error && <p className="dash-warning">{error}</p>}
+
+      {reviewing && (
+        <div className="chart-card">
+          <h3>
+            {reviewing.name} — confirm what belongs ({checked.size} selected
+            {reviewing.llm ? ', pre-ticked by Claude' : ', pre-ticked by heuristic — no API key'})
+          </h3>
+          <table className="mini-table trip-suggest">
+            <tbody>
+              {reviewing.suggestions.map((s) => (
+                <tr key={s.id} className={checked.has(s.id) ? '' : 'lapsed'}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={checked.has(s.id)}
+                      onChange={(e) => {
+                        const next = new Set(checked)
+                        if (e.target.checked) next.add(s.id)
+                        else next.delete(s.id)
+                        setChecked(next)
+                      }}
+                    />
+                  </td>
+                  <td className="muted">{s.date}</td>
+                  <td className="merchant-name" title={s.description}>{s.description}</td>
+                  <td className="num">{s.currency} {s.amount.toFixed(2)}</td>
+                  <td className="muted">{s.in_window ? '' : 'outside window'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button onClick={confirm}>✓ Save trip assignment</button>{' '}
+          <button onClick={() => setReviewing(null)}>Cancel</button>
+        </div>
+      )}
+
+      {!reviewing && trips && trips.length === 0 && (
+        <p className="review-intro">No trips yet — create one above.</p>
+      )}
+
+      {!reviewing &&
+        trips?.map((t) => (
+          <div className="chart-card trip-card" key={t.id}>
+            <div className="chart-card-head">
+              <h3>
+                {t.name}{' '}
+                <span className="muted">
+                  {t.start_date} → {t.end_date} · {t.days} days
+                </span>
+              </h3>
+              <span>
+                <button
+                  className="table-toggle"
+                  onClick={() => suggest(t.id, t.name)}
+                  data-tip="Re-run the review — useful after importing new statements covering the trip"
+                >
+                  review payments
+                </button>{' '}
+                <button className="table-toggle" onClick={() => removeTrip(t)}>
+                  delete
+                </button>
+              </span>
+            </div>
+            <div className="kpi-row">
+              <StatTile label="Total cost" value={gbp(t.total)} />
+              <StatTile label="Per day" value={gbp(t.per_day)} />
+              <StatTile label="Payments" value={String(t.transactions)} />
+            </div>
+            {t.by_category.length > 0 && <BarList rows={t.by_category} fill={slotFill} />}
+          </div>
+        ))}
+    </section>
+  )
+}
+
 type YearSummary = {
   year: number | null
   years: number[]
@@ -306,7 +581,7 @@ function YearView({
   setView,
   slotFill,
 }: {
-  setView: (v: 'time' | 'category' | 'year') => void
+  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
   slotFill: (id: number) => string
 }) {
   const [data, setData] = useState<YearSummary | null>(null)
@@ -392,8 +667,8 @@ function ViewSwitch({
   view,
   setView,
 }: {
-  view: 'time' | 'category' | 'year'
-  setView: (v: 'time' | 'category' | 'year') => void
+  view: 'time' | 'category' | 'year' | 'trips'
+  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
 }) {
   return (
     <span className="view-switch">
@@ -418,6 +693,13 @@ function ViewSwitch({
       >
         By year
       </button>
+      <button
+        className={view === 'trips' ? 'active' : ''}
+        onClick={() => setView('trips')}
+        data-tip="What individual trips cost, all-in: flights booked months ahead, spending abroad, your Splitwise shares"
+      >
+        Trips
+      </button>
     </span>
   )
 }
@@ -432,7 +714,7 @@ function CategoryView({
   overview: Overview
   selectedCat: number
   setSelectedCat: (id: number) => void
-  setView: (v: 'time' | 'category' | 'year') => void
+  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
   slotFill: (id: number) => string
 }) {
   const [merchants, setMerchants] = useState<MonthDetail['merchants']>([])

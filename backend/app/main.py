@@ -347,6 +347,96 @@ def stats_overview(db: Session = Depends(get_db), months: int = Query(default=12
     return monthly_overview(db, months=months)
 
 
+class TripBody(BaseModel):
+    name: str
+    start_date: date
+    end_date: date
+
+
+class TripAssignBody(BaseModel):
+    add: list[int] = []
+    remove: list[int] = []
+
+
+@app.get("/api/trips")
+def list_trips(db: Session = Depends(get_db)):
+    from .trips import trip_stats
+
+    return [
+        trip_stats(db, trip)
+        for trip in db.scalars(select(models.Trip).order_by(models.Trip.start_date.desc()))
+    ]
+
+
+@app.post("/api/trips")
+def create_trip(body: TripBody, db: Session = Depends(get_db)):
+    name = body.name.strip()
+    if not name or body.end_date < body.start_date:
+        raise HTTPException(status_code=422, detail="A trip needs a name and start <= end")
+    if db.scalar(select(models.Trip).where(models.Trip.name == name)):
+        raise HTTPException(status_code=409, detail=f"Trip {name!r} already exists")
+    trip = models.Trip(name=name, start_date=body.start_date, end_date=body.end_date)
+    db.add(trip)
+    db.commit()
+    return {"id": trip.id, "name": trip.name, "start_date": trip.start_date, "end_date": trip.end_date}
+
+
+@app.delete("/api/trips/{trip_id}")
+def delete_trip(trip_id: int, db: Session = Depends(get_db)):
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    for tx in db.scalars(select(models.Transaction).where(models.Transaction.trip_id == trip_id)):
+        tx.trip_id = None
+    db.delete(trip)
+    db.commit()
+    return {"deleted": trip_id}
+
+
+@app.post("/api/trips/{trip_id}/suggest")
+def suggest_trip(trip_id: int, db: Session = Depends(get_db)):
+    """LLM (or heuristic fallback) review of the trip's candidate window —
+    3 months before through 1 month after. Suggestions only; nothing is
+    assigned until /assign."""
+    import anthropic
+
+    from .trips import review
+
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    try:
+        return review(db, trip)
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=502, detail=f"Claude API error: {e}")
+
+
+@app.post("/api/trips/{trip_id}/assign")
+def assign_trip(trip_id: int, body: TripAssignBody, db: Session = Depends(get_db)):
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    added = removed = 0
+    for tx in db.scalars(select(models.Transaction).where(models.Transaction.id.in_(body.add))):
+        if tx.trip_id not in (None, trip_id):
+            raise HTTPException(
+                status_code=409, detail=f"Transaction {tx.id} already belongs to another trip"
+            )
+        tx.trip_id = trip_id
+        added += 1
+    for tx in db.scalars(
+        select(models.Transaction).where(
+            models.Transaction.id.in_(body.remove), models.Transaction.trip_id == trip_id
+        )
+    ):
+        tx.trip_id = None
+        removed += 1
+    db.commit()
+    from .trips import trip_stats
+
+    return {"added": added, "removed": removed, "trip": trip_stats(db, trip)}
+
+
 @app.get("/api/stats/year")
 def stats_year(db: Session = Depends(get_db), year: int | None = Query(default=None, ge=1900, le=2200)):
     from .stats import year_summary

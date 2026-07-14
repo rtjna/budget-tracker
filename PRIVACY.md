@@ -38,3 +38,13 @@ owned by the operator, with the operator's explicit consent.
 The sole data subject is the operator. Bank consents can be revoked at any
 time through the connected bank or by deleting the authorization, and all
 stored data can be deleted by the operator at will.
+
+## Trip review (opt-in, per use)
+
+The trips feature can ask Claude whether each candidate payment belongs to a
+trip. Unlike merchant categorization (which sends only merchant names and one
+sample description), a trip review sends each candidate transaction's date,
+amount, currency, category, and description to the Anthropic API — this is
+the only feature that does, it runs only when you create a trip or press
+"review payments", and account numbers/balances are never included. Verdicts
+are suggestions; nothing is assigned without your confirmation.

@@ -364,3 +364,27 @@
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
+
+.trip-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.trip-form input {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--baseline);
+  border-radius: 6px;
+  background: inherit;
+  color: inherit;
+  font: inherit;
+}
+
+.trip-card .kpi-row {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.trip-suggest td {
+  vertical-align: middle;
+}

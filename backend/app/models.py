@@ -46,6 +46,18 @@ class ImportBatch(Base):
     date_max: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
+class Trip(Base):
+    """A named, date-bounded trip whose cost is tracked across categories,
+    accounts, currencies, and Splitwise corrections."""
+
+    __tablename__ = "trips"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -67,6 +79,9 @@ class Transaction(Base):
         ForeignKey("transactions.id"), nullable=True, index=True
     )
     fingerprint: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # Optional trip membership — orthogonal to category: a dinner in Tokyo is
+    # still Eating Out AND part of the Japan trip.
+    trip_id: Mapped[int | None] = mapped_column(ForeignKey("trips.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     account: Mapped[Account] = relationship(back_populates="transactions")
