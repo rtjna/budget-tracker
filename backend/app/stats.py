@@ -23,6 +23,16 @@ GBP_RATES = {
     "CHF": Decimal("0.92"),
     "JPY": Decimal("0.0050"),
     "THB": Decimal("0.023"),
+    # Travel/Splitwise currencies — trend-grade accuracy, not accounting.
+    "AED": Decimal("0.20"),
+    "CNY": Decimal("0.10"),
+    "COP": Decimal("0.00018"),
+    "DKK": Decimal("0.11"),
+    "HUF": Decimal("0.0022"),
+    "MXN": Decimal("0.040"),
+    "MYR": Decimal("0.17"),
+    "OMR": Decimal("1.92"),
+    "SGD": Decimal("0.56"),
 }
 
 TRANSFER_CATEGORY = "Transfers"
