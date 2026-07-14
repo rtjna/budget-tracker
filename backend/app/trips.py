@@ -4,7 +4,7 @@ A Trip groups transactions across categories, accounts, currencies, and
 Splitwise corrections; membership is orthogonal to categorization, so trip
 totals never distort the regular stats.
 
-Candidates come from the trip window plus 3 months before and 1 month after
+Candidates come from the trip window plus 4 months before and 1 month after
 (prepaid flights and hotels live before departure; late charges and refunds
 trail it). Each candidate is reviewed by Claude — does this payment belong to
 this trip? — and every verdict is only a pre-ticked suggestion: assignment is
@@ -27,7 +27,7 @@ from .llm import MODEL, _make_client, _parse_batch
 from .models import Category, Transaction, Trip, TripReviewVerdict
 from .stats import GBP_RATES, to_gbp
 
-BEFORE_DAYS = 90
+BEFORE_DAYS = 120  # flights are often booked ~4 months out
 AFTER_DAYS = 30
 BATCH_SIZE = 100
 
@@ -95,7 +95,7 @@ def review(db: Session, trip: Trip, client=None) -> dict:
         system = (
             "You review personal bank transactions and decide whether each one "
             "belongs to a specific trip. Prepaid bookings (flights, hotels, "
-            "trains, travel insurance, visas) commonly appear up to 3 months "
+            "trains, travel insurance, visas) commonly appear up to 4 months "
             "BEFORE the trip window; late charges and refunds up to a month "
             "after. Everyday home-country spending (rent, subscriptions, "
             "groceries near home, gym) does NOT belong even when dated inside "

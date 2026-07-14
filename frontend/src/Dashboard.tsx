@@ -510,7 +510,7 @@ function TripsView({
         <button
           onClick={createTrip}
           disabled={!form.name.trim() || !form.start || !form.end || !!busy}
-          data-tip="Create the trip, then Claude reviews every payment in the window (plus 3 months before for bookings, 1 month after for late charges) and suggests which belong"
+          data-tip="Create the trip, then Claude reviews every payment in the window (plus 4 months before for bookings, 1 month after for late charges) and suggests which belong"
         >
           + New trip
         </button>
