@@ -267,3 +267,85 @@ def test_negative_income_reduces_income_not_spending():
     from app.stats import year_summary
     s = year_summary(db, 2026)
     assert s["income"] == 2500.0 and s["spending"] == 10.0
+
+
+def test_year_summary_top_merchants():
+    from app.stats import year_summary
+
+    db, gbp, _, groceries, _ = make_db()
+    add(db, gbp, date(2026, 3, 5), "TESCO", "-75.00", cat=groceries.id)
+    add(db, gbp, date(2026, 4, 2), "TESCO", "-25.00", cat=groceries.id)
+    add(db, gbp, date(2026, 4, 9), "TESCO", "10.00", cat=groceries.id)  # refund
+    add(db, gbp, date(2026, 5, 1), "PRET", "-30.00", cat=groceries.id)
+    add(db, gbp, date(2025, 7, 1), "OLD SHOP", "-500.00", cat=groceries.id)  # other year
+    add(db, gbp, date(2026, 4, 28), "SALARY", "3000.00")  # income, not a merchant
+    db.commit()
+
+    s = year_summary(db, 2026)
+    assert s["merchants"][0] == {"merchant": "TESCO", "total": 90.0, "count": 3}
+    assert s["merchants"][1] == {"merchant": "PRET", "total": 30.0, "count": 1}
+    assert all(m["merchant"] not in ("SALARY", "OLD SHOP") for m in s["merchants"])
+
+
+def test_overview_committed_split():
+    db, gbp, _, groceries, _ = make_db()
+    housing = Category(name="Housing")
+    db.add(housing)
+    db.flush()
+    # Committed via category…
+    add(db, gbp, date(2026, 6, 1), "LANDLORD", "-1200.00", cat=housing.id)
+    # …and via a recurring merchant categorized elsewhere.
+    for i in range(6):
+        add(db, gbp, date(2026, 1, 15) + timedelta(days=30 * i), "GYM CO", "-40.00",
+            cat=groceries.id)
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-100.00", cat=groceries.id)
+    db.commit()
+
+    data = monthly_overview(db)
+    by_month = {m["month"]: m for m in data["months"]}
+    june = by_month["2026-06"]
+    assert june["spending"] == 1340.0
+    assert june["committed"] == 1240.0  # rent + gym; Tesco is discretionary
+    assert by_month["2026-05"]["committed"] == 40.0  # gym only
+
+
+def test_month_insights_spike_new_merchant_and_large_tx():
+    from app.stats import month_insights
+
+    db, gbp, _, groceries, _ = make_db()
+    # Steady £100/month baseline for a year, then a £300 June.
+    for m in range(1, 6):
+        add(db, gbp, date(2026, m, 5), "TESCO", "-100.00", cat=groceries.id)
+    for m in range(7, 13):
+        add(db, gbp, date(2025, m, 5), "TESCO", "-100.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-100.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 12), "FANCY BUTCHER", "-200.00", cat=groceries.id)
+    db.commit()
+
+    insights = month_insights(db, "2026-06")
+    kinds = {f["kind"] for f in insights["findings"]}
+    assert "category_spike" in kinds
+    spike = next(f for f in insights["findings"] if f["kind"] == "category_spike")
+    assert "Groceries" in spike["text"] and "£300" in spike["text"]
+    # FANCY BUTCHER is both first-ever and a large single payment.
+    assert any(
+        f["kind"] == "new_merchant" and "FANCY BUTCHER" in f["text"]
+        for f in insights["findings"]
+    )
+    assert any(f["kind"] == "large_transaction" for f in insights["findings"])
+    # A steady month reports no spike, and month one has no baseline noise.
+    assert month_insights(db, "2026-05")["findings"] == []
+    assert month_insights(db, "2025-07")["findings"] == []
+
+
+def test_month_insights_lapsed_subscription():
+    from app.stats import month_insights
+
+    db, gbp, _, _, _ = make_db()
+    for i in range(5):
+        add(db, gbp, date(2025, 10, 15) + timedelta(days=30 * i), "NETFLIX.COM", "-9.99")
+    db.commit()  # last charge 2026-02-12 → expected ~2026-03-14, never came
+
+    insights = month_insights(db, "2026-03")
+    lapsed = [f for f in insights["findings"] if f["kind"] == "lapsed"]
+    assert len(lapsed) == 1 and "NETFLIX.COM" in lapsed[0]["text"]

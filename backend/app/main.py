@@ -467,6 +467,16 @@ def stats_month(month: str, db: Session = Depends(get_db)):
     return month_detail(db, month)
 
 
+@app.get("/api/stats/insights/{month}")
+def stats_insights(month: str, db: Session = Depends(get_db)):
+    """What changed this month vs the trailing 12: category spikes,
+    subscription price changes, lapsed subscriptions, new merchants, and the
+    largest payments. Deterministic — no LLM, nothing leaves the machine."""
+    from .stats import month_insights
+
+    return month_insights(db, month)
+
+
 @app.get("/api/stats/category/{category_id}/merchants")
 def stats_category_merchants(
     category_id: int, db: Session = Depends(get_db), months: int = Query(default=12, le=60)
@@ -531,6 +541,7 @@ def list_transactions(
     account_id: int | None = None,
     provider: str | None = None,
     category_id: int | None = None,
+    merchant: str | None = None,
     search: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -552,6 +563,16 @@ def list_transactions(
         )
     if category_id is not None:
         query = query.where(models.Transaction.category_id == category_id)
+    if merchant is not None:
+        # Stats key merchants as `merchant or description`, so drill-downs
+        # from the dashboard match rows whose merchant was never normalized.
+        query = query.where(
+            or_(
+                models.Transaction.merchant == merchant,
+                models.Transaction.merchant.is_(None)
+                & (models.Transaction.description == merchant),
+            )
+        )
     if search:
         query = query.where(or_(models.Transaction.description.icontains(search)))
     if date_from is not None:

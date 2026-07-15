@@ -41,6 +41,11 @@ TRANSFER_CATEGORY = "Transfers"
 # separate net-invested series instead.
 INVESTING_CATEGORY = "Investing"
 
+# Spending that is committed rather than discretionary: these categories plus
+# anything from a detected recurring merchant. The split answers "how much of
+# my spending could I actually change?"
+COMMITTED_CATEGORIES = ("Housing", "Utilities & Bills", "Subscriptions")
+
 
 def _is_income(tx, income_id) -> bool:
     """A positive amount counts as income when it's explicitly categorized as
@@ -149,9 +154,23 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
     txs = _spending_transactions(db)
     categories = {c.id: c.name for c in db.scalars(select(Category))}
     income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    committed_ids = set(
+        db.scalars(select(Category.id).where(Category.name.in_(COMMITTED_CATEGORIES)))
+    )
+    # Recurring merchants count as committed wherever they're categorized —
+    # a gym membership is committed even though Sports isn't.
+    recurring_merchants = {r["merchant"] for r in recurring(db)}
+
+    def _is_committed(tx) -> bool:
+        return tx.category_id in committed_ids or tx.merchant in recurring_merchants
 
     by_month: dict[str, dict] = defaultdict(
-        lambda: {"spending": Decimal(0), "income": Decimal(0), "by_category": defaultdict(Decimal)}
+        lambda: {
+            "spending": Decimal(0),
+            "income": Decimal(0),
+            "committed": Decimal(0),
+            "by_category": defaultdict(Decimal),
+        }
     )
 
     for tx in txs:
@@ -166,6 +185,8 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
         elif gbp < 0:
             bucket["spending"] += -gbp
             bucket["by_category"][tx.category_id] += -gbp
+            if _is_committed(tx):
+                bucket["committed"] += -gbp
         elif _is_income(tx, income_id):
             bucket["income"] += gbp
         else:
@@ -174,6 +195,8 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
             # as income.
             bucket["spending"] -= gbp
             bucket["by_category"][tx.category_id] -= gbp
+            if _is_committed(tx):
+                bucket["committed"] -= gbp
 
     invested = _invested_by_month(db)
     for month in invested:
@@ -193,6 +216,7 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
                 "month": m,
                 "spending": float(by_month[m]["spending"]),
                 "income": float(by_month[m]["income"]),
+                "committed": float(by_month[m]["committed"]),
                 "invested": float(invested.get(m, 0)),
                 "net": float(by_month[m]["income"] - by_month[m]["spending"]),
                 "by_category": {
@@ -225,7 +249,7 @@ def year_summary(db: Session, year: int | None = None) -> dict:
     years = sorted({t.date.year for t in txs})
     if not years:
         return {"year": None, "years": [], "spending": 0, "income": 0, "net": 0,
-                "invested": 0, "categories": []}
+                "invested": 0, "categories": [], "merchants": []}
     if year is None or year not in years:
         year = years[-1]
 
@@ -233,6 +257,13 @@ def year_summary(db: Session, year: int | None = None) -> dict:
     income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
     spending = income = Decimal(0)
     by_category: dict[int | None, Decimal] = defaultdict(Decimal)
+    by_merchant: dict[str, dict] = defaultdict(lambda: {"total": Decimal(0), "count": 0})
+
+    def _spend(tx, gbp: Decimal) -> None:
+        m = by_merchant[tx.merchant or tx.description]
+        m["total"] += gbp
+        m["count"] += 1
+
     for tx in txs:
         if tx.date.year != year:
             continue
@@ -242,11 +273,13 @@ def year_summary(db: Session, year: int | None = None) -> dict:
         elif gbp < 0:
             spending += -gbp
             by_category[tx.category_id] += -gbp
+            _spend(tx, -gbp)
         elif _is_income(tx, income_id):
             income += gbp
         else:
             spending -= gbp
             by_category[tx.category_id] -= gbp
+            _spend(tx, -gbp)  # refunds subtract from their merchant
 
     invested = sum(
         (v for month, v in _invested_by_month(db).items() if month.startswith(f"{year:04d}-")),
@@ -273,6 +306,13 @@ def year_summary(db: Session, year: int | None = None) -> dict:
             ),
             key=lambda c: -c["total"],
         ),
+        "merchants": sorted(
+            (
+                {"merchant": name, "total": float(v["total"]), "count": v["count"]}
+                for name, v in by_merchant.items()
+            ),
+            key=lambda x: -x["total"],
+        )[:15],
     }
 
 
@@ -460,3 +500,124 @@ def recurring(db: Session) -> list[dict]:
         )
     results.sort(key=lambda r: (not r["active"], -r["monthly_equivalent"]))
     return results
+
+
+# month_insights thresholds: a category is a spike when it beats its
+# trailing-12 median by both this ratio and this floor (the floor keeps a
+# £4 → £8 coffee month out of the report).
+SPIKE_RATIO = 1.5
+SPIKE_MIN_DELTA = Decimal(25)
+NEW_CATEGORY_MIN = Decimal(50)  # spend in a category with a £0 median
+NEW_MERCHANT_MIN = Decimal(20)
+LARGE_TX_MIN = Decimal(75)
+CADENCE_DAYS = {"weekly": 7, "monthly": 30, "quarterly": 91, "yearly": 365}
+
+
+def month_insights(db: Session, month: str) -> dict:
+    """What changed this month: a ranked, plain-English diff of the month
+    against the trailing 12 calendar months — category spikes vs the median,
+    subscription price changes, recently lapsed subscriptions, first-ever
+    merchants, and the largest single payments. Deterministic; no LLM."""
+    txs = _spending_transactions(db)
+    categories = {c.id: c.name for c in db.scalars(select(Category))}
+    income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+
+    by_month_cat: dict[str, dict] = defaultdict(lambda: defaultdict(Decimal))
+    merchant_first: dict[str, str] = {}
+    merchant_month_total: dict[str, Decimal] = defaultdict(Decimal)
+    month_spending: list[tuple] = []
+    for tx in txs:
+        if _income_category(tx, income_id):
+            continue
+        if tx.amount > 0 and _is_income(tx, income_id):
+            continue
+        key = tx.date.strftime("%Y-%m")
+        gbp = -to_gbp(tx.amount, tx.account.currency)  # refunds subtract
+        by_month_cat[key][tx.category_id] += gbp
+        name = tx.merchant or tx.description
+        if name not in merchant_first or key < merchant_first[name]:
+            merchant_first[name] = key
+        if key == month:
+            merchant_month_total[name] += gbp
+            if gbp > 0:
+                month_spending.append((gbp, tx.date, tx.description, name))
+
+    # Baseline: the 12 calendar months immediately before `month` that have
+    # any data at all; a category absent from one of them counts as £0 there.
+    baseline_keys = _calendar_window(
+        sorted(k for k in by_month_cat if k < month), 12
+    )
+    findings: list[dict] = []
+
+    if baseline_keys:
+        spikes = []
+        for cid, cur in by_month_cat.get(month, {}).items():
+            base = median(by_month_cat[k].get(cid, Decimal(0)) for k in baseline_keys)
+            name = categories.get(cid, "Uncategorized")
+            if base <= 0:
+                if cur >= NEW_CATEGORY_MIN:
+                    spikes.append((cur, f"{name}: {_g(cur)} — usually nothing"))
+            elif cur >= base * Decimal(SPIKE_RATIO) and cur - base >= SPIKE_MIN_DELTA:
+                spikes.append(
+                    (cur - base, f"{name}: {_g(cur)}, {_g(cur - base)} over its typical {_g(base)}")
+                )
+        spikes.sort(key=lambda s: -s[0])
+        findings += [{"kind": "category_spike", "text": t} for _, t in spikes[:5]]
+
+    recurring_items = recurring(db)
+    recurring_merchants = {r["merchant"] for r in recurring_items}
+    for r in recurring_items:
+        if r["price_change"] != 0 and r["last_date"].startswith(month):
+            arrow = "rose" if r["price_change"] > 0 else "dropped"
+            findings.append(
+                {
+                    "kind": "price_change",
+                    "text": f"{r['merchant']} {arrow} to {_g(Decimal(str(r['last_amount'])))} "
+                    f"(typically {_g(Decimal(str(r['typical_amount'])))})",
+                }
+            )
+        if not r["active"]:
+            # Recently lapsed: the charge that was due this month never came.
+            expected = date.fromisoformat(r["last_date"]) + timedelta(
+                days=CADENCE_DAYS.get(r["cadence"], 30)
+            )
+            if expected.strftime("%Y-%m") == month:
+                findings.append(
+                    {
+                        "kind": "lapsed",
+                        "text": f"{r['merchant']} ({_g(Decimal(str(r['typical_amount'])))} "
+                        f"{r['cadence']}) stopped charging — last seen {r['last_date']}",
+                    }
+                )
+
+    if baseline_keys:  # without history, every merchant is trivially "new"
+        new_merchants = sorted(
+            (
+                (total, name)
+                for name, total in merchant_month_total.items()
+                if merchant_first.get(name) == month and total >= NEW_MERCHANT_MIN
+            ),
+            reverse=True,
+        )
+        findings += [
+            {"kind": "new_merchant", "text": f"First time at {name}: {_g(total)}"}
+            for total, name in new_merchants[:5]
+        ]
+
+    # Notable single payments: routine recurring charges are excluded — the
+    # rent being large every month is not news.
+    notable = [
+        s for s in month_spending if s[0] >= LARGE_TX_MIN and s[3] not in recurring_merchants
+    ]
+    notable.sort(reverse=True)
+    findings += [
+        {"kind": "large_transaction", "text": f"{desc} — {_g(amount)} on {day}"}
+        for amount, day, desc, _name in notable[:3]
+    ]
+
+    return {"month": month, "findings": findings}
+
+
+def _g(v: Decimal) -> str:
+    """£-formatted whole pounds for insight sentences."""
+    return f"£{float(v):,.0f}"
