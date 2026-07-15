@@ -134,7 +134,7 @@ function CategorySelect({
 }
 
 export default function App() {
-  const [tab, setTab] = useState<'dashboard' | 'transactions' | 'review' | 'coverage'>('dashboard')
+  const [tab, setTab] = useState<'dashboard' | 'transactions' | 'review' | 'data'>('dashboard')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [txs, setTxs] = useState<Tx[]>([])
@@ -146,6 +146,9 @@ export default function App() {
   const [accountFilter, setAccountFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
   const [monthFilter, setMonthFilter] = useState('')
+  // Set only by dashboard drill-downs (there is no merchant dropdown);
+  // rendered as a removable chip in the filter row.
+  const [merchantFilter, setMerchantFilter] = useState('')
   const [months, setMonths] = useState<string[]>([])
   const [sortOrder, setSortOrder] = useState('date_desc')
   const [onlyUncategorized, setOnlyUncategorized] = useState(false)
@@ -233,13 +236,14 @@ export default function App() {
     if (accountFilter.startsWith('p:')) params.set('provider', accountFilter.slice(2))
     else if (accountFilter !== '') params.set('account_id', accountFilter)
     if (monthFilter) params.set('month', monthFilter)
+    if (merchantFilter) params.set('merchant', merchantFilter)
     if (sortOrder !== 'date_desc') params.set('order', sortOrder)
     if (categoryFilter !== '') params.set('category_id', String(categoryFilter))
     if (onlyUncategorized) params.set('uncategorized', 'true')
     const data = await (await api(`/api/transactions?${params}`)).json()
     setTxs(data.items)
     setTotal(data.total)
-  }, [page, search, accountFilter, categoryFilter, monthFilter, sortOrder, onlyUncategorized])
+  }, [page, search, accountFilter, categoryFilter, monthFilter, merchantFilter, sortOrder, onlyUncategorized])
 
   const loadReview = useCallback(async () => {
     const data = await (await api('/api/review')).json()
@@ -256,30 +260,88 @@ export default function App() {
     loadTxs()
   }, [loadTxs])
 
-  async function uploadFiles(files: FileList | File[]) {
-    const results: ImportResult[] = []
-    for (const file of Array.from(files)) {
-      const body = new FormData()
-      body.append('file', file)
-      const res = await api('/api/imports', { method: 'POST', body })
-      if (res.ok) {
-        results.push(await res.json())
-      } else {
-        const detail = (await res.json()).detail ?? res.statusText
-        results.push({
-          filename: file.name,
-          source: '?',
-          new: 0,
-          duplicates: 0,
-          date_min: null,
-          date_max: null,
-          error: detail,
-        })
+  const uploadFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const results: ImportResult[] = []
+      for (const file of Array.from(files)) {
+        const body = new FormData()
+        body.append('file', file)
+        const res = await api('/api/imports', { method: 'POST', body })
+        if (res.ok) {
+          results.push(await res.json())
+        } else {
+          const detail = (await res.json()).detail ?? res.statusText
+          results.push({
+            filename: file.name,
+            source: '?',
+            new: 0,
+            duplicates: 0,
+            date_min: null,
+            date_max: null,
+            error: detail,
+          })
+        }
+      }
+      setImports(results)
+      setPage(0)
+      await Promise.all([loadStatic(), loadTxs(), loadReview()])
+    },
+    [loadStatic, loadTxs, loadReview],
+  )
+
+  // Files can be dropped anywhere, on any tab: a window-level listener shows
+  // a full-viewport overlay and routes the drop to the importer (the drop
+  // itself is handled here too — the overlay is purely visual).
+  useEffect(() => {
+    let depth = 0
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files') ?? false
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth += 1
+      setDragging(true)
+    }
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setDragging(false)
+    }
+    const over = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    const drop = (e: DragEvent) => {
+      depth = 0
+      setDragging(false)
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      if (e.dataTransfer?.files.length) {
+        setTab('data') // land where the import results appear
+        uploadFiles(e.dataTransfer.files)
       }
     }
-    setImports(results)
+    window.addEventListener('dragenter', enter)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('dragover', over)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragenter', enter)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('drop', drop)
+    }
+  }, [uploadFiles])
+
+  // Dashboard → Transactions drill-down: land on the transactions tab with
+  // exactly the filters that reproduce the number that was clicked.
+  function drill(f: { categoryId?: number; month?: string; merchant?: string }) {
+    setSearch('')
+    setAccountFilter('')
+    setOnlyUncategorized(f.categoryId === 0)
+    setCategoryFilter(f.categoryId !== undefined && f.categoryId !== 0 ? f.categoryId : '')
+    setMonthFilter(f.month ?? '')
+    setMerchantFilter(f.merchant ?? '')
+    setSortOrder('date_desc')
     setPage(0)
-    await Promise.all([loadStatic(), loadTxs(), loadReview()])
+    setTab('transactions')
   }
 
   async function categorizeTx(tx: Tx, categoryId: number | null) {
@@ -306,92 +368,16 @@ export default function App() {
   }
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const anyStale = accountGroups(accounts).some((g) => g.stale)
 
   return (
     <main className="app">
       <h1>Budget Tracker</h1>
 
-      <section
-        className={`dropzone ${dragging ? 'dragging' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          uploadFiles(e.dataTransfer.files)
-        }}
-      >
-        <p>Drop bank exports here (CSV, Excel, or Barclays PDF statements), or</p>
-        <button
-          className="filepick"
-          data-tip="Pick bank export files to import — the format and bank are detected automatically, and re-importing the same file is safe (duplicates are skipped)"
-          onClick={() => fileInput.current?.click()}
-        >
-          choose files
-        </button>
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".csv,.xlsx,.pdf"
-          multiple
-          hidden
-          onChange={(e) => e.target.files && uploadFiles(e.target.files)}
-        />
-      </section>
-
-      {imports.length > 0 && (
-        <section className="import-results">
-          {imports.map((r, i) => (
-            <p key={i} className={r.error ? 'error' : ''}>
-              {r.error
-                ? `${r.filename}: ${r.error}`
-                : `${r.filename} → ${r.source}: ${r.new} new, ${r.duplicates} duplicates ` +
-                  `(${r.date_min} to ${r.date_max})`}
-            </p>
-          ))}
-        </section>
-      )}
-
-      {accounts.length > 0 && (
-        <section className="accounts">
-          {accountGroups(accounts).map((g) => (
-            <div
-              key={g.key}
-              className="account-card clickable"
-              data-tip={`Show all ${g.name} transactions`}
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                setAccountFilter(g.filter)
-                setPage(0)
-                setTab('transactions')
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  setAccountFilter(g.filter)
-                  setPage(0)
-                  setTab('transactions')
-                }
-              }}
-            >
-              <strong>
-                {g.name}
-                {g.stale && <span className="stale-flag"> ⚠ stale</span>}
-              </strong>
-              <span>
-                {g.count} transactions · {g.currencyLabel}
-              </span>
-              <span className="coverage">
-                activity {daysAgo(g.latest)}
-                {g.imported ? ` · imported ${daysAgo(g.imported)}` : ' · manual entries'}
-              </span>
-            </div>
-          ))}
-        </section>
+      {dragging && (
+        <div className="drop-overlay" aria-hidden="true">
+          <span>Drop to import</span>
+        </div>
       )}
 
       <nav className="tabs">
@@ -407,7 +393,7 @@ export default function App() {
           className={tab === 'transactions' ? 'active' : ''}
           aria-current={tab === 'transactions' ? 'page' : undefined}
           onClick={() => setTab('transactions')}
-          data-tip="Browse, search, and filter every transaction; sync and import tools"
+          data-tip="Browse, search, and filter every transaction"
         >
           Transactions
         </button>
@@ -420,18 +406,133 @@ export default function App() {
           Review{reviewTotal > 0 ? ` (${reviewTotal})` : ''}
         </button>
         <button
-          className={tab === 'coverage' ? 'active' : ''}
-          aria-current={tab === 'coverage' ? 'page' : undefined}
-          onClick={() => setTab('coverage')}
-          data-tip="Which accounts have data for which months, and where the gaps are"
+          className={tab === 'data' ? 'active' : ''}
+          aria-current={tab === 'data' ? 'page' : undefined}
+          onClick={() => setTab('data')}
+          data-tip="Import files, sync accounts, and check which months have data — files can also be dropped anywhere in the app"
         >
-          Coverage
+          Data
+          {anyStale && (
+            <span className="stale-flag" data-tip="An account hasn't been fed data in over 30 days">
+              {' '}
+              ⚠<span className="sr-only"> — an account hasn't been fed data in over 30 days</span>
+            </span>
+          )}
         </button>
       </nav>
 
-      {tab === 'dashboard' && <Dashboard />}
+      {tab === 'dashboard' && <Dashboard onDrill={drill} />}
 
-      {tab === 'coverage' && <Coverage />}
+      {tab === 'data' && (
+        <>
+          <section className="dropzone">
+            <p>Drop bank exports anywhere in the app (CSV, Excel, or Barclays PDF statements), or</p>
+            <button
+              className="filepick"
+              data-tip="Pick bank export files to import — the format and bank are detected automatically, and re-importing the same file is safe (duplicates are skipped)"
+              onClick={() => fileInput.current?.click()}
+            >
+              choose files
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".csv,.xlsx,.pdf"
+              multiple
+              hidden
+              onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+            />
+          </section>
+
+          {imports.length > 0 && (
+            <section className="import-results">
+              {imports.map((r, i) => (
+                <p key={i} className={r.error ? 'error' : ''}>
+                  {r.error
+                    ? `${r.filename}: ${r.error}`
+                    : `${r.filename} → ${r.source}: ${r.new} new, ${r.duplicates} duplicates ` +
+                      `(${r.date_min} to ${r.date_max})`}
+                </p>
+              ))}
+            </section>
+          )}
+
+          <section className="data-actions">
+            <button
+              onClick={detectTransfers}
+              data-tip="Find matching money movements between your own accounts (card payments, top-ups) and link them so they don't count as spending or income"
+            >
+              ⇄ Detect transfers
+            </button>
+            <button
+              onClick={syncSplitwise}
+              data-tip="Pull your Splitwise balances and apply corrections so shared expenses only count your share"
+            >
+              ⚖ Sync Splitwise
+            </button>
+            <button
+              onClick={syncMonzo}
+              data-tip="Pull recent transactions straight from Monzo via its API (asks you to re-authorize when the connection has expired)"
+            >
+              ⚡ Sync Monzo
+            </button>
+          </section>
+          {transferMsg && (
+            <p className="review-intro">
+              {transferMsg}
+              {monzoUrl && (
+                <>
+                  {' '}
+                  <a href={monzoUrl} target="_blank" rel="noreferrer">
+                    → Authorize with Monzo
+                  </a>
+                </>
+              )}
+            </p>
+          )}
+
+          {accounts.length > 0 && (
+            <section className="accounts">
+              {accountGroups(accounts).map((g) => (
+                <div
+                  key={g.key}
+                  className="account-card clickable"
+                  data-tip={`Show all ${g.name} transactions`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setAccountFilter(g.filter)
+                    setPage(0)
+                    setTab('transactions')
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setAccountFilter(g.filter)
+                      setPage(0)
+                      setTab('transactions')
+                    }
+                  }}
+                >
+                  <strong>
+                    {g.name}
+                    {g.stale && <span className="stale-flag"> ⚠ stale</span>}
+                  </strong>
+                  <span>
+                    {g.count} transactions · {g.currencyLabel}
+                  </span>
+                  <span className="coverage">
+                    activity {daysAgo(g.latest)}
+                    {g.imported ? ` · imported ${daysAgo(g.imported)}` : ' · manual entries'}
+                  </span>
+                </div>
+              ))}
+            </section>
+          )}
+
+          <Coverage />
+        </>
+      )}
 
       {tab === 'transactions' && (
         <>
@@ -512,44 +613,29 @@ export default function App() {
               />
               uncategorized
             </label>
+            {merchantFilter && (
+              <span className="filter-chip">
+                {merchantFilter}
+                <button
+                  className="delete-btn"
+                  data-tip="Stop filtering by this merchant"
+                  onClick={() => {
+                    setMerchantFilter('')
+                    setPage(0)
+                  }}
+                >
+                  ×<span className="sr-only"> clear merchant filter</span>
+                </button>
+              </span>
+            )}
             <button
-              onClick={detectTransfers}
-              data-tip="Find matching money movements between your own accounts (card payments, top-ups) and link them so they don't count as spending or income"
-            >
-              ⇄ Detect transfers
-            </button>
-            <button
-              onClick={syncSplitwise}
-              data-tip="Pull your Splitwise balances and apply corrections so shared expenses only count your share"
-            >
-              ⚖ Sync Splitwise
-            </button>
-            <button
-              onClick={syncMonzo}
-              data-tip="Pull recent transactions straight from Monzo via its API (asks you to re-authorize when the connection has expired)"
-            >
-              ⚡ Sync Monzo
-            </button>
-            <button
+              className={`add-toggle ${showAdd ? '' : 'btn-primary'}`}
               onClick={() => setShowAdd(!showAdd)}
               data-tip="Enter a transaction by hand — e.g. cash spending no bank export will ever contain"
             >
               {showAdd ? '× Close' : '+ Add transaction'}
             </button>
           </section>
-          {transferMsg && (
-            <p className="review-intro">
-              {transferMsg}
-              {monzoUrl && (
-                <>
-                  {' '}
-                  <a href={monzoUrl} target="_blank" rel="noreferrer">
-                    → Authorize with Monzo
-                  </a>
-                </>
-              )}
-            </p>
-          )}
           {showAdd && (
             <AddTransaction
               accounts={accounts}
@@ -734,57 +820,77 @@ function AddTransaction({
     onAdded()
   }
 
+  const currency = accounts.find((a) => a.id === form.accountId)?.currency ?? 'GBP'
+
   return (
     <div className="add-tx">
-      <input
-        type="date"
-        value={form.date}
-        max={today}
-        onChange={(e) => setForm({ ...form, date: e.target.value })}
-      />
-      <input
-        className="add-tx-desc"
-        placeholder="Description (e.g. Farmers market)"
-        value={form.description}
-        onChange={(e) => setForm({ ...form, description: e.target.value })}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-      />
-      <select
-        value={form.kind}
-        onChange={(e) => setForm({ ...form, kind: e.target.value as 'expense' | 'income' })}
-      >
-        <option value="expense">Expense</option>
-        <option value="income">Income</option>
-      </select>
-      <input
-        className="add-tx-amount"
-        type="number"
-        min="0.01"
-        step="0.01"
-        placeholder="Amount"
-        value={form.amount}
-        onChange={(e) => setForm({ ...form, amount: e.target.value })}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-      />
-      <select
-        value={form.accountId}
-        onChange={(e) => setForm({ ...form, accountId: Number(e.target.value) })}
-      >
-        <option value={0}>Cash (manual)</option>
-        {accounts
-          .filter((a) => a.provider !== 'splitwise')
-          .map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-      </select>
-      <CategorySelect
-        categories={categories}
-        value={form.categoryId}
-        onChange={(id) => setForm({ ...form, categoryId: id ?? '' })}
-      />
-      <button onClick={submit} data-tip="Save this transaction to the selected account">
+      <label className="field">
+        <span className="field-label">Date</span>
+        <input
+          type="date"
+          value={form.date}
+          max={today}
+          onChange={(e) => setForm({ ...form, date: e.target.value })}
+        />
+      </label>
+      <label className="field add-tx-desc">
+        <span className="field-label">Description</span>
+        <input
+          autoFocus
+          placeholder="e.g. Farmers market"
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+        />
+      </label>
+      <label className="field">
+        <span className="field-label">Type</span>
+        <select
+          value={form.kind}
+          onChange={(e) => setForm({ ...form, kind: e.target.value as 'expense' | 'income' })}
+        >
+          <option value="expense">Expense</option>
+          <option value="income">Income</option>
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">Amount ({currency})</span>
+        <input
+          className="add-tx-amount"
+          type="number"
+          min="0.01"
+          step="0.01"
+          placeholder="0.00"
+          value={form.amount}
+          onChange={(e) => setForm({ ...form, amount: e.target.value })}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+        />
+      </label>
+      <label className="field">
+        <span className="field-label">Account</span>
+        <select
+          value={form.accountId}
+          onChange={(e) => setForm({ ...form, accountId: Number(e.target.value) })}
+        >
+          <option value={0}>Cash (manual)</option>
+          {accounts
+            .filter((a) => a.provider !== 'splitwise')
+            .map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">Category</span>
+        <CategorySelect
+          categories={categories}
+          value={form.categoryId}
+          onChange={(id) => setForm({ ...form, categoryId: id ?? '' })}
+        />
+      </label>
+      <button className="btn-primary" onClick={submit} data-tip="Save this transaction to the selected account">
         Add
       </button>
       {error && <span className="error">{error}</span>}

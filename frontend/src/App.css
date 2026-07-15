@@ -6,7 +6,7 @@
 }
 
 .dropzone {
-  border: 2px dashed #8884;
+  border: 2px dashed var(--gridline);
   border-radius: 12px;
   padding: 1.5rem;
   text-align: center;
@@ -38,7 +38,7 @@
 }
 
 .import-results .error {
-  color: #d33;
+  color: var(--danger);
 }
 
 .accounts {
@@ -49,7 +49,7 @@
 }
 
 .account-card {
-  border: 1px solid #8884;
+  border: 1px solid var(--gridline);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   display: flex;
@@ -72,7 +72,7 @@
 .filters input,
 .filters select {
   padding: 0.5rem 0.75rem;
-  border: 1px solid #8886;
+  border: 1px solid var(--baseline);
   border-radius: 6px;
   font-size: 0.95rem;
   background: inherit;
@@ -92,7 +92,7 @@
 .tx-table th,
 .tx-table td {
   padding: 0.45rem 0.6rem;
-  border-bottom: 1px solid #8883;
+  border-bottom: 1px solid var(--gridline);
   text-align: left;
 }
 
@@ -124,7 +124,7 @@
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1rem;
-  border-bottom: 1px solid #8883;
+  border-bottom: 1px solid var(--gridline);
   padding-bottom: 0.5rem;
 }
 
@@ -152,7 +152,7 @@
   max-width: 11rem;
   padding: 0.2rem 0.3rem;
   border-radius: 5px;
-  border: 1px solid #8885;
+  border: 1px solid var(--baseline);
   background: inherit;
   color: inherit;
   font-size: 0.85rem;
@@ -162,7 +162,7 @@
   font-size: 0.7rem;
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
-  border: 1px solid #8885;
+  border: 1px solid var(--baseline);
   color: var(--text-muted); /* muted via token, not stacked opacity */
 }
 
@@ -177,7 +177,7 @@
   align-items: center;
   gap: 1rem;
   padding: 0.6rem 0.25rem;
-  border-bottom: 1px solid #8883;
+  border-bottom: 1px solid var(--gridline);
 }
 
 .review-merchant {
@@ -205,7 +205,7 @@
 .review-actions select {
   padding: 0.35rem 0.5rem;
   border-radius: 6px;
-  border: 1px solid #8885;
+  border: 1px solid var(--baseline);
   background: inherit;
   color: inherit;
 }
@@ -218,7 +218,7 @@
 
 .add-category input {
   padding: 0.4rem 0.6rem;
-  border: 1px solid #8886;
+  border: 1px solid var(--baseline);
   border-radius: 6px;
   background: inherit;
   color: inherit;
@@ -245,7 +245,7 @@
   flex-wrap: wrap;
   align-items: center;
   padding: 0.75rem;
-  border: 1px solid #8884;
+  border: 1px solid var(--gridline);
   border-radius: 10px;
   margin-bottom: 1rem;
 }
@@ -253,7 +253,7 @@
 .add-tx input,
 .add-tx select {
   padding: 0.4rem 0.55rem;
-  border: 1px solid #8886;
+  border: 1px solid var(--baseline);
   border-radius: 6px;
   background: inherit;
   color: inherit;
@@ -262,14 +262,14 @@
 
 .add-tx-desc { flex: 1; min-width: 12rem; }
 .add-tx-amount { width: 7rem; }
-.add-tx .error { color: #d33; font-size: 0.8rem; }
+.add-tx .error { color: var(--danger); font-size: 0.8rem; }
 
 .row-actions { width: 1.5rem; }
 
 .delete-btn {
   border: none;
   background: none;
-  color: #d33;
+  color: var(--danger);
   cursor: pointer;
   font-size: 1rem;
   padding: 0 0.3rem;
@@ -314,7 +314,7 @@
   align-items: center;
   gap: 0.25rem;
   padding: 0.15rem 0.3rem 0.15rem 0.6rem;
-  border: 1px solid #8885;
+  border: 1px solid var(--baseline);
   border-radius: 999px;
   font-size: 0.82rem;
 }
@@ -324,15 +324,45 @@
 }
 
 .account-card.clickable:hover {
-  border-color: #888a;
+  border-color: var(--baseline);
 }
 
 .stale-flag {
-  color: #d97706;
+  color: var(--warning);
   font-size: 0.78rem;
   font-weight: 600;
 }
 
 .tx-scroll {
   overflow-x: auto;
+}
+
+/* The Data tab's sync actions — deliberately separate from the Transactions
+   filter row, which now only holds query controls (audit A2). */
+.data-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+/* "+ Add transaction" is an action, not a filter: push it to the far end. */
+.filters .add-toggle {
+  margin-left: auto;
+}
+
+/* Active merchant drill-down filter, removable in place. */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--accent);
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

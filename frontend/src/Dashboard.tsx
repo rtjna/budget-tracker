@@ -6,9 +6,27 @@ type MonthRow = {
   month: string
   spending: number
   income: number
+  committed: number
   invested: number
   net: number
   by_category: Record<string, number>
+}
+
+// Dashboard → Transactions drill-down: the filters that reproduce a clicked
+// number. categoryId 0 means "uncategorized".
+type DrillFilter = { categoryId?: number; month?: string; merchant?: string }
+
+type Insights = {
+  month: string
+  findings: { kind: string; text: string }[]
+}
+
+const INSIGHT_KINDS: Record<string, string> = {
+  category_spike: 'spike',
+  price_change: 'price',
+  lapsed: 'lapsed',
+  new_merchant: 'new',
+  large_transaction: 'big',
 }
 
 type CategoryTotal = { id: number; name: string; total: number }
@@ -72,12 +90,13 @@ function niceTicks(max: number): number[] {
   return ticks
 }
 
-export default function Dashboard() {
+export default function Dashboard({ onDrill }: { onDrill: (f: DrillFilter) => void }) {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [view, setView] = useState<'time' | 'category' | 'year' | 'trips'>('time')
   const [selected, setSelected] = useState('')
   const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
+  const [insights, setInsights] = useState<Insights | null>(null)
   const [recurring, setRecurring] = useState<RecurringItem[]>([])
   // Loading, loaded-empty, and failed are three different situations —
   // never show "no data" while a fetch is in flight or after it broke.
@@ -106,6 +125,12 @@ export default function Dashboard() {
         .then((r) => r.json())
         .then(setDetail)
         .catch(() => setDetail(null))
+      api(`/api/stats/insights/${selected}`)
+        .then((r) => r.json())
+        .then(setInsights)
+        .catch(() => setInsights(null))
+    } else {
+      setInsights(null) // the average month has no diff to report
     }
   }, [selected])
 
@@ -133,6 +158,7 @@ export default function Dashboard() {
       month: 'average',
       spending: ms.reduce((s, m) => s + m.spending, 0) / n,
       income: ms.reduce((s, m) => s + m.income, 0) / n,
+      committed: ms.reduce((s, m) => s + m.committed, 0) / n,
       invested: ms.reduce((s, m) => s + m.invested, 0) / n,
       net: ms.reduce((s, m) => s + m.net, 0) / n,
       by_category: by,
@@ -156,6 +182,18 @@ export default function Dashboard() {
   const activeSubs = recurring.filter((r) => r.active)
   const subsMonthly = activeSubs.reduce((s, r) => s + r.monthly_equivalent, 0)
 
+  // Savings rate = share of income kept; the 3-month window smooths out a
+  // single bonus or annual-bill month.
+  const savingsRate = current.income > 0 ? (current.income - current.spending) / current.income : null
+  const rateWindow =
+    selected === 'average' ? months : months.slice(0, months.indexOf(current) + 1)
+  const last3 = rateWindow.slice(-3)
+  const income3 = last3.reduce((s, m) => s + m.income, 0)
+  const rolling3 =
+    income3 > 0 ? (income3 - last3.reduce((s, m) => s + m.spending, 0)) / income3 : null
+  const committedPct = current.spending > 0 ? (current.committed / current.spending) * 100 : 0
+  const discretionary = Math.max(current.spending - current.committed, 0)
+
   const seriesName = (id: number) =>
     overview.categories.find((c) => c.id === id)?.name ?? 'Uncategorized'
   const slotFill = (categoryId: number) => {
@@ -165,7 +203,7 @@ export default function Dashboard() {
   }
 
   if (view === 'year') {
-    return <YearView setView={setView} slotFill={slotFill} />
+    return <YearView setView={setView} slotFill={slotFill} onDrill={onDrill} />
   }
 
   if (view === 'trips') {
@@ -180,6 +218,7 @@ export default function Dashboard() {
         setSelectedCat={setSelectedCat}
         setView={setView}
         slotFill={slotFill}
+        onDrill={onDrill}
       />
     )
   }
@@ -237,6 +276,22 @@ export default function Dashboard() {
           value={gbp(subsMonthly)}
           sub={`${activeSubs.length} active`}
         />
+        <StatTile
+          label="Savings rate"
+          value={savingsRate === null ? '—' : `${Math.round(savingsRate * 100)}%`}
+          sub={
+            rolling3 !== null && selected !== 'average'
+              ? `3-month average ${Math.round(rolling3 * 100)}%`
+              : 'of income kept'
+          }
+          tip="Share of the month's income you kept: (income − spending) ÷ income. Investing counts as kept, not spent."
+        />
+        <StatTile
+          label="Committed spending"
+          value={gbp(current.committed)}
+          sub={`${Math.round(committedPct)}% of spending · ${gbp(discretionary)} flexible`}
+          tip="Housing, utilities & bills, subscriptions, and anything from a detected recurring merchant — the spending you can't easily change month to month. The rest is discretionary."
+        />
       </div>
 
       <ChartCard title="Spending by month">
@@ -249,9 +304,25 @@ export default function Dashboard() {
         />
       </ChartCard>
 
-      <ChartCard title="Income vs spending">
-        <IncomeSpending months={chartMonths} selected={current.month} onSelect={setSelected} />
-      </ChartCard>
+      {selected !== 'average' && insights && (
+        <div className="chart-card">
+          <h3>What changed — {monthLong(current.month)}</h3>
+          {insights.findings.length === 0 ? (
+            <p className="muted">Nothing unusual — this looks like a typical month.</p>
+          ) : (
+            <ul className="insight-list">
+              {insights.findings.map((f, i) => (
+                <li key={i}>
+                  <span className={`insight-kind ik-${f.kind}`}>
+                    {INSIGHT_KINDS[f.kind] ?? f.kind}
+                  </span>{' '}
+                  {f.text}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="dash-split">
         <ChartCard title={`Categories — ${monthLong(current.month)}`}>
@@ -266,9 +337,16 @@ export default function Dashboard() {
                 .filter((c) => c.total > 0)
                 .sort((a, b) => b.total - a.total)}
               fill={slotFill}
+              onRowClick={(id) => onDrill({ categoryId: id })}
             />
           ) : (
-            detail && <BarList rows={detail.categories} fill={slotFill} />
+            detail && (
+              <BarList
+                rows={detail.categories}
+                fill={slotFill}
+                onRowClick={(id) => onDrill({ categoryId: id, month: current.month })}
+              />
+            )
           )}
         </ChartCard>
         <div className="chart-card">
@@ -279,17 +357,21 @@ export default function Dashboard() {
             <table className="mini-table">
               <tbody>
                 {detail?.merchants.slice(0, 10).map((m) => (
-                  <tr key={m.merchant}>
-                    <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
-                    <td className="num muted">{m.count}×</td>
-                    <td className="num">{gbp(m.total, 2)}</td>
-                  </tr>
+                  <MerchantRow
+                    key={m.merchant}
+                    m={m}
+                    onClick={() => onDrill({ merchant: m.merchant, month: current.month })}
+                  />
                 ))}
               </tbody>
             </table>
           )}
         </div>
       </div>
+
+      <ChartCard title="Income vs spending">
+        <IncomeSpending months={chartMonths} selected={current.month} onSelect={setSelected} />
+      </ChartCard>
 
       <div className="chart-card">
         <h3>Recurring payments</h3>
@@ -490,24 +572,32 @@ function TripsView({
       </div>
 
       <div className="trip-form">
-        <input
-          placeholder="Trip name (e.g. Japan)"
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-        />
-        <input
-          type="date"
-          value={form.start}
-          onChange={(e) => setForm({ ...form, start: e.target.value })}
-          data-tip="First day of the trip"
-        />
-        <input
-          type="date"
-          value={form.end}
-          onChange={(e) => setForm({ ...form, end: e.target.value })}
-          data-tip="Last day of the trip"
-        />
+        <label className="field">
+          <span className="field-label">Trip name</span>
+          <input
+            placeholder="e.g. Japan"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">From</span>
+          <input
+            type="date"
+            value={form.start}
+            onChange={(e) => setForm({ ...form, start: e.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">To</span>
+          <input
+            type="date"
+            value={form.end}
+            onChange={(e) => setForm({ ...form, end: e.target.value })}
+          />
+        </label>
         <button
+          className="btn-primary"
           onClick={createTrip}
           disabled={!form.name.trim() || !form.start || !form.end || !!busy}
           data-tip="Create the trip, then Claude reviews every payment in the window (plus 4 months before for bookings, 1 month after for late charges) and suggests which belong"
@@ -553,16 +643,18 @@ function TripsView({
               ))}
             </tbody>
           </table>
-          <button onClick={confirm}>✓ Save trip assignment</button>{' '}
+          <button className="btn-primary" onClick={confirm}>✓ Save trip assignment</button>{' '}
           <button
             onClick={() => suggest(reviewing.id, reviewing.name, true)}
             data-tip="Discard the saved verdicts and have Claude review all candidates again (uses your API key)"
           >
             ↻ Re-ask Claude
           </button>{' '}
-          <button onClick={() => setReviewing(null)}>Cancel</button>
+          <button className="btn-quiet" onClick={() => setReviewing(null)}>Cancel</button>
         </div>
       )}
+
+      {!reviewing && trips === null && !error && <p className="review-intro">Loading trips…</p>}
 
       {!reviewing && trips && trips.length === 0 && (
         <p className="review-intro">No trips yet — create one above.</p>
@@ -611,14 +703,17 @@ type YearSummary = {
   net: number
   invested: number
   categories: (CategoryTotal & { share: number })[]
+  merchants: { merchant: string; total: number; count: number }[]
 }
 
 function YearView({
   setView,
   slotFill,
+  onDrill,
 }: {
   setView: (v: 'time' | 'category' | 'year' | 'trips') => void
   slotFill: (id: number) => string
+  onDrill: (f: DrillFilter) => void
 }) {
   const [data, setData] = useState<YearSummary | null>(null)
   const [year, setYear] = useState<number | null>(null)
@@ -671,30 +766,51 @@ function YearView({
         />
       </div>
 
-      <ChartCard title={`Spending by category — ${data.year}`}>
-        <div className="bar-list year-list">
-          {data.categories.map((c) => (
-            <div key={c.id} className="bar-row year-row">
-              <span className="bar-name" title={c.name}>
-                {c.name}
-              </span>
-              <span className="bar-track">
-                <span
-                  className="bar-fill"
-                  style={{
-                    width: `${Math.max((c.total / max) * 100, 0)}%`,
-                    background: slotFill(c.id),
-                  }}
+      <div className="dash-split">
+        <ChartCard title={`Spending by category — ${data.year}`}>
+          <div className="bar-list year-list">
+            {data.categories.map((c) => (
+              <div key={c.id} className="bar-row year-row">
+                <span className="bar-name" title={c.name}>
+                  {c.name}
+                </span>
+                <span className="bar-track">
+                  <span
+                    className="bar-fill"
+                    style={{
+                      width: `${Math.max((c.total / max) * 100, 0)}%`,
+                      background: slotFill(c.id),
+                    }}
+                  />
+                </span>
+                <span className="bar-value">{gbp(c.total)}</span>
+                <span className="bar-share">
+                  {c.share.toFixed(1)}%<span className="sr-only"> of the year's spend</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </ChartCard>
+        <div className="chart-card">
+          <h3>Top merchants — {data.year}</h3>
+          <table className="mini-table">
+            <tbody>
+              {data.merchants.map((m) => (
+                <MerchantRow
+                  key={m.merchant}
+                  m={m}
+                  onClick={() => onDrill({ merchant: m.merchant })}
                 />
-              </span>
-              <span className="bar-value">{gbp(c.total)}</span>
-              <span className="bar-share">
-                {c.share.toFixed(1)}%<span className="sr-only"> of the year's spend</span>
-              </span>
-            </div>
-          ))}
+              ))}
+              {data.merchants.length === 0 && (
+                <tr>
+                  <td className="muted">No spending recorded this year.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      </ChartCard>
+      </div>
     </section>
   )
 }
@@ -746,12 +862,14 @@ function CategoryView({
   setSelectedCat,
   setView,
   slotFill,
+  onDrill,
 }: {
   overview: Overview
   selectedCat: number
   setSelectedCat: (id: number) => void
   setView: (v: 'time' | 'category' | 'year' | 'trips') => void
   slotFill: (id: number) => string
+  onDrill: (f: DrillFilter) => void
 }) {
   const [merchants, setMerchants] = useState<MonthDetail['merchants']>([])
   useEffect(() => {
@@ -829,11 +947,11 @@ function CategoryView({
           <table className="mini-table">
             <tbody>
               {merchants.slice(0, 12).map((m) => (
-                <tr key={m.merchant}>
-                  <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
-                  <td className="num muted">{m.count}×</td>
-                  <td className="num">{gbp(m.total, 2)}</td>
-                </tr>
+                <MerchantRow
+                  key={m.merchant}
+                  m={m}
+                  onClick={() => onDrill({ merchant: m.merchant, categoryId: cat.id })}
+                />
               ))}
               {merchants.length === 0 && (
                 <tr>
@@ -1143,6 +1261,16 @@ function StackedColumns({
                     </rect>
                   )
                 })}
+                {m.month === selected && (
+                  <rect
+                    x={x}
+                    y={PAD.top + plotH + 3}
+                    width={barW}
+                    height={3}
+                    rx={1.5}
+                    fill="var(--accent)"
+                  />
+                )}
                 <text
                   x={x + barW / 2}
                   y={H - 8}
@@ -1316,6 +1444,16 @@ function IncomeSpending({
                   fill="var(--money-in)"
                   opacity={hover && hover !== m.month ? 0.45 : 1}
                 />
+                {m.month === selected && (
+                  <rect
+                    x={cx - barW - 1}
+                    y={PAD.top + plotH + 3}
+                    width={barW * 2 + 2}
+                    height={3}
+                    rx={1.5}
+                    fill="var(--accent)"
+                  />
+                )}
                 <text
                   x={cx}
                   y={H - 8}
@@ -1384,12 +1522,39 @@ function IncomeSpending({
   )
 }
 
-function BarList({ rows, fill }: { rows: CategoryTotal[]; fill: (id: number) => string }) {
+function BarList({
+  rows,
+  fill,
+  onRowClick,
+}: {
+  rows: CategoryTotal[]
+  fill: (id: number) => string
+  onRowClick?: (id: number) => void
+}) {
   const max = Math.max(...rows.map((r) => r.total), 1)
   return (
-    <div className="bar-list">
+    <div className={`bar-list ${onRowClick ? 'clickable' : ''}`}>
       {rows.map((r) => (
-        <div key={r.id} className="bar-row" data-tip={`${r.name}: ${gbp(r.total, 2)}`}>
+        <div
+          key={r.id}
+          className="bar-row"
+          data-tip={
+            onRowClick
+              ? `${r.name}: ${gbp(r.total, 2)} — click to see the transactions`
+              : `${r.name}: ${gbp(r.total, 2)}`
+          }
+          {...(onRowClick && {
+            role: 'button',
+            tabIndex: 0,
+            onClick: () => onRowClick(r.id),
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onRowClick(r.id)
+              }
+            },
+          })}
+        >
           <span className="bar-name">{r.name}</span>
           <span className="bar-track">
             <span
@@ -1398,8 +1563,39 @@ function BarList({ rows, fill }: { rows: CategoryTotal[]; fill: (id: number) => 
             />
           </span>
           <span className="bar-value">{gbp(r.total)}</span>
+          {onRowClick && <span className="drill-hint" aria-hidden="true">→</span>}
         </div>
       ))}
     </div>
+  )
+}
+
+// One row of a top-merchants table; clicking drills through to the
+// transactions behind the number.
+function MerchantRow({
+  m,
+  onClick,
+}: {
+  m: { merchant: string; total: number; count: number }
+  onClick: () => void
+}) {
+  return (
+    <tr
+      className="drillable"
+      role="button"
+      tabIndex={0}
+      title="Click to see these transactions"
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onClick()
+        }
+      }}
+    >
+      <td className="merchant-name" title={m.merchant}>{m.merchant}</td>
+      <td className="num muted">{m.count}×</td>
+      <td className="num">{gbp(m.total, 2)}</td>
+    </tr>
   )
 }

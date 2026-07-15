@@ -91,6 +91,9 @@ button:disabled {
   --series-7: #e87ba4;
   --series-8: #eb6834;
   --series-uncat: #a8a69e; /* neutral gray: missing data, not a category */
+  --danger: #c9351f; /* errors and destructive actions */
+  --warning: #b45309; /* staleness and caution notices — AA on light surface */
+  --warning-border: #d9770666;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -116,7 +119,64 @@ button:disabled {
     --series-7: #d55181;
     --series-8: #d95926;
     --series-uncat: #6f6e67;
+    --danger: #ef7261;
+    --warning: #fbbf24;
+    --warning-border: #d9770666;
   }
+}
+
+/* Button hierarchy: exactly one primary action per form or dialog; quiet is
+   for actions that back out (Cancel, Close). Everything else stays ghost. */
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn-quiet {
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+/* Labeled form fields: a small caption stacked above each control, so date
+   pairs and amounts are readable without hovering (audit E1). */
+.field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.field-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+/* Full-viewport cue while dragging files anywhere over the app; the drop
+   itself is handled by window-level listeners, this is purely visual. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+}
+
+.drop-overlay span {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--surface-1);
+  padding: 0.6rem 1.4rem;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
 }
 
 /* Keyboard focus is always visible (audit C3). */

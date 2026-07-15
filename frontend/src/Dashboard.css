@@ -334,17 +334,11 @@
 }
 
 .dash-warning {
-  border: 1px solid #d9770666;
+  border: 1px solid var(--warning-border);
   border-radius: 8px;
   padding: 0.5rem 0.8rem;
-  color: #b45309;
+  color: var(--warning);
   font-size: 0.9rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  .dash-warning {
-    color: #fbbf24;
-  }
 }
 
 /* Flip the tooltip to the left when hovering the right half of the chart so
@@ -392,4 +386,60 @@
 .tt-pct {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* "What changed this month" findings. */
+.insight-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.insight-kind {
+  display: inline-block;
+  min-width: 3.2rem;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--baseline);
+  color: var(--text-muted);
+}
+
+.ik-category_spike,
+.ik-price_change {
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+
+/* Drill-down affordances: rows that lead to the transactions behind them. */
+.mini-table tr.drillable {
+  cursor: pointer;
+}
+
+.mini-table tr.drillable:hover td {
+  background: color-mix(in srgb, var(--gridline) 45%, transparent);
+}
+
+.bar-list.clickable .bar-row[role='button'] {
+  grid-template-columns: 8.5rem 1fr 4.5rem 0.9rem;
+}
+
+.drill-hint {
+  color: var(--text-muted);
+  opacity: 0;
+  font-size: 0.8rem;
+}
+
+.bar-row:hover .drill-hint,
+.bar-row:focus-visible .drill-hint {
+  opacity: 1;
 }
