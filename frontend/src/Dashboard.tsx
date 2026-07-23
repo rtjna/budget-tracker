@@ -92,7 +92,7 @@ function niceTicks(max: number): number[] {
 
 export default function Dashboard({ onDrill }: { onDrill: (f: DrillFilter) => void }) {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [view, setView] = useState<'time' | 'category' | 'year' | 'trips'>('time')
+  const [view, setView] = useState<'time' | 'category' | 'year' | 'budgets' | 'trips'>('time')
   const [selected, setSelected] = useState('')
   const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
@@ -204,6 +204,17 @@ export default function Dashboard({ onDrill }: { onDrill: (f: DrillFilter) => vo
 
   if (view === 'year') {
     return <YearView setView={setView} slotFill={slotFill} onDrill={onDrill} />
+  }
+
+  if (view === 'budgets') {
+    return (
+      <BudgetsView
+        setView={setView}
+        categories={overview.categories}
+        months={months.map((m) => m.month)}
+        onDrill={onDrill}
+      />
+    )
   }
 
   if (view === 'trips') {
@@ -449,7 +460,7 @@ function TripsView({
   setView,
   slotFill,
 }: {
-  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
   slotFill: (id: number) => string
 }) {
   const [trips, setTrips] = useState<TripStats[] | null>(null)
@@ -711,7 +722,7 @@ function YearView({
   slotFill,
   onDrill,
 }: {
-  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
   slotFill: (id: number) => string
   onDrill: (f: DrillFilter) => void
 }) {
@@ -815,12 +826,273 @@ function YearView({
   )
 }
 
+type BudgetRow = {
+  category_id: number
+  name: string
+  budget: number
+  spent: number
+  remaining: number
+  fraction: number
+  over_pace: boolean
+}
+
+type BudgetSummary = {
+  month: string
+  pace_fraction: number
+  days_in_month: number
+  categories: BudgetRow[]
+  total_spent: number
+  unbudgeted_spent: number
+  overall_budget: number | null
+}
+
+function BudgetsView({
+  setView,
+  categories,
+  months,
+  onDrill,
+}: {
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
+  categories: CategoryTotal[]
+  months: string[]
+  onDrill: (f: DrillFilter) => void
+}) {
+  const [month, setMonth] = useState(months[months.length - 1] ?? '')
+  const [summary, setSummary] = useState<BudgetSummary | null>(null)
+  const [averages, setAverages] = useState<Record<number, number>>({})
+  const [editing, setEditing] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = () => {
+    if (month) {
+      api(`/api/stats/budget/${month}`)
+        .then((r) => r.json())
+        .then(setSummary)
+        .catch(() => setError('Could not load budgets.'))
+    }
+    api('/api/budgets')
+      .then((r) => r.json())
+      .then((d) => setAverages(d.averages ?? {}))
+      .catch(() => {})
+  }
+  useEffect(load, [month])
+
+  async function setBudget(categoryId: number, amount: number) {
+    await api('/api/budgets', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category_id: categoryId, amount }),
+    })
+    load()
+  }
+
+  async function seed() {
+    await api('/api/budgets/seed', { method: 'POST' })
+    setEditing(false)
+    load()
+  }
+
+  const budgeted = summary?.categories ?? []
+  const totalBudget = budgeted.reduce((s, r) => s + r.budget, 0)
+  const totalSpent = budgeted.reduce((s, r) => s + r.spent, 0)
+  const pace = summary?.pace_fraction ?? 0
+  // Categories with no budget yet, for the editor's "add" list.
+  const budgetedIds = new Set(budgeted.map((r) => r.category_id))
+  const unbudgetedCats = categories.filter((c) => c.id !== 0 && !budgetedIds.has(c.id))
+
+  return (
+    <section className="dash viz-root">
+      <div className="dash-filters">
+        <ViewSwitch view="budgets" setView={setView} />
+        <label>
+          Month{' '}
+          <select value={month} onChange={(e) => setMonth(e.target.value)}>
+            {[...months].reverse().map((m) => (
+              <option key={m} value={m}>
+                {monthLong(m)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="table-toggle"
+          onClick={() => setEditing(!editing)}
+          data-tip="Add, change, or remove monthly category limits"
+        >
+          {editing ? 'done editing' : 'edit limits'}
+        </button>
+        <span className="dash-note">
+          Limits apply from the month you set them onward — changing one never rewrites past months
+        </span>
+      </div>
+
+      {error && <p className="dash-warning">{error}</p>}
+
+      {budgeted.length === 0 && !editing && (
+        <p className="review-intro">
+          No budgets yet.{' '}
+          <button className="link-btn" onClick={seed}>
+            Seed them from your 12-month averages
+          </button>{' '}
+          or press “edit limits” to set them by hand.
+        </p>
+      )}
+
+      {budgeted.length > 0 && (
+        <div className="kpi-row">
+          <StatTile label="Budgeted" value={gbp(totalBudget)} sub={`${budgeted.length} categories`} />
+          <StatTile
+            label="Spent so far"
+            value={gbp(totalSpent)}
+            sub={`${Math.round((totalSpent / (totalBudget || 1)) * 100)}% of budget`}
+          />
+          <StatTile
+            label="Remaining"
+            value={gbp(totalBudget - totalSpent)}
+            tip="Budgeted minus spent across all limited categories this month."
+          />
+          <StatTile
+            label="Unbudgeted spend"
+            value={gbp(summary?.unbudgeted_spent ?? 0)}
+            sub="categories with no limit"
+          />
+        </div>
+      )}
+
+      {budgeted.length > 0 && (
+        <div className="chart-card">
+          <div className="chart-card-head">
+            <h3>Budgets — {monthLong(month)}</h3>
+            {pace > 0 && pace < 1 && (
+              <span className="dash-note">
+                Day marker = {Math.round(pace * 100)}% through the month
+              </span>
+            )}
+          </div>
+          <div className="budget-list">
+            {budgeted.map((r) => {
+              const status = r.fraction > 1 ? 'over' : r.over_pace ? 'ahead' : 'ok'
+              return (
+                <div key={r.category_id} className="budget-row">
+                  <span
+                    className="bar-name budget-name"
+                    role="button"
+                    tabIndex={0}
+                    title="See these transactions"
+                    onClick={() => onDrill({ categoryId: r.category_id, month })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onDrill({ categoryId: r.category_id, month })
+                      }
+                    }}
+                  >
+                    {r.name}
+                  </span>
+                  <span className="budget-track">
+                    <span
+                      className={`budget-fill status-${status}`}
+                      style={{ width: `${Math.min(r.fraction, 1) * 100}%` }}
+                    />
+                    {pace > 0 && pace < 1 && (
+                      <span className="budget-pace" style={{ left: `${pace * 100}%` }} />
+                    )}
+                  </span>
+                  <span className="budget-figures">
+                    <span className="num">{gbp(r.spent)}</span>
+                    <span className="muted"> / {gbp(r.budget)}</span>
+                  </span>
+                  {editing ? (
+                    <BudgetEditor
+                      value={r.budget}
+                      onSave={(v) => setBudget(r.category_id, v)}
+                    />
+                  ) : (
+                    <span className={`budget-remaining ${r.remaining < 0 ? 'over' : ''}`}>
+                      {r.remaining < 0
+                        ? `${gbp(-r.remaining)} over`
+                        : `${gbp(r.remaining)} left`}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {editing && (
+        <div className="chart-card">
+          <div className="chart-card-head">
+            <h3>Add a limit</h3>
+            <button className="table-toggle" onClick={seed} data-tip="Set every unbudgeted category to its rounded 12-month average">
+              seed all from averages
+            </button>
+          </div>
+          {unbudgetedCats.length === 0 ? (
+            <p className="muted">Every category has a budget.</p>
+          ) : (
+            <div className="budget-list">
+              {unbudgetedCats.map((c) => (
+                <div key={c.id} className="budget-row add-budget-row">
+                  <span className="bar-name">{c.name}</span>
+                  <span className="muted budget-avg">
+                    {averages[c.id] ? `avg ${gbp(averages[c.id])}/mo` : 'no recent spend'}
+                  </span>
+                  <BudgetEditor
+                    value={averages[c.id] ? Math.round(averages[c.id] / 5) * 5 : 0}
+                    placeholder="Set…"
+                    onSave={(v) => setBudget(c.id, v)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function BudgetEditor({
+  value,
+  placeholder,
+  onSave,
+}: {
+  value: number
+  placeholder?: string
+  onSave: (v: number) => void
+}) {
+  const [text, setText] = useState(value ? String(value) : '')
+  return (
+    <span className="budget-editor">
+      £
+      <input
+        type="number"
+        min="0"
+        step="5"
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && onSave(Number(text) || 0)}
+      />
+      <button
+        className="table-toggle"
+        onClick={() => onSave(Number(text) || 0)}
+        data-tip="Save this limit (0 removes it)"
+      >
+        save
+      </button>
+    </span>
+  )
+}
+
 function ViewSwitch({
   view,
   setView,
 }: {
-  view: 'time' | 'category' | 'year' | 'trips'
-  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
+  view: 'time' | 'category' | 'year' | 'budgets' | 'trips'
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
 }) {
   return (
     <span className="view-switch">
@@ -846,6 +1118,13 @@ function ViewSwitch({
         By year
       </button>
       <button
+        className={view === 'budgets' ? 'active' : ''}
+        onClick={() => setView('budgets')}
+        data-tip="Set a monthly limit per category and track spending against it, with a mid-month pace marker"
+      >
+        Budgets
+      </button>
+      <button
         className={view === 'trips' ? 'active' : ''}
         onClick={() => setView('trips')}
         data-tip="What individual trips cost, all-in: flights booked months ahead, spending abroad, your Splitwise shares"
@@ -867,7 +1146,7 @@ function CategoryView({
   overview: Overview
   selectedCat: number
   setSelectedCat: (id: number) => void
-  setView: (v: 'time' | 'category' | 'year' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
   slotFill: (id: number) => string
   onDrill: (f: DrillFilter) => void
 }) {

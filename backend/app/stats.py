@@ -13,7 +13,7 @@ from statistics import median
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Account, Category, Transaction
+from .models import Account, Budget, Category, Transaction
 
 # Approximate GBP conversion rates (mid-2026). Update occasionally by hand.
 GBP_RATES = {
@@ -621,3 +621,108 @@ def month_insights(db: Session, month: str) -> dict:
 def _g(v: Decimal) -> str:
     """£-formatted whole pounds for insight sentences."""
     return f"£{float(v):,.0f}"
+
+
+def _month_start(month: str) -> date:
+    y, m = map(int, month.split("-"))
+    return date(y, m, 1)
+
+
+def _month_days(month: str) -> int:
+    y, m = map(int, month.split("-"))
+    return (date(y + (m == 12), m % 12 + 1, 1) - date(y, m, 1)).days
+
+
+def _category_spend(db: Session, month: str) -> dict[int | None, Decimal]:
+    """Per-category GBP spend for one month, refund semantics applied — the
+    same numbers the month view shows. Income-side rows are excluded."""
+    income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    by_category: dict[int | None, Decimal] = defaultdict(Decimal)
+    for tx in _spending_transactions(db):
+        if tx.date.strftime("%Y-%m") != month:
+            continue
+        if _income_category(tx, income_id):
+            continue
+        if tx.amount > 0 and _is_income(tx, income_id):
+            continue
+        by_category[tx.category_id] += -to_gbp(tx.amount, tx.account.currency)
+    return by_category
+
+
+def _budgets_for(db: Session, month: str) -> dict[int | None, Decimal]:
+    """The limit in force for each category in `month`: the latest budget with
+    effective_from on or before the month's first day. category_id None is the
+    overall budget."""
+    start = _month_start(month)
+    applicable: dict[int | None, tuple[date, Decimal]] = {}
+    for b in db.scalars(select(Budget).where(Budget.effective_from <= start)):
+        current = applicable.get(b.category_id)
+        if current is None or b.effective_from > current[0]:
+            applicable[b.category_id] = (b.effective_from, Decimal(b.amount))
+    return {cid: amt for cid, (_, amt) in applicable.items()}
+
+
+def budget_summary(db: Session, month: str) -> dict:
+    """Budget-vs-actual for a month with mid-month pace. `pace_fraction` is how
+    far through the month we are (1.0 for any past month), so the frontend can
+    show "expected by now"; `on_track` compares spend to that pro-rata line."""
+    categories = {c.id: c.name for c in db.scalars(select(Category))}
+    spend = _category_spend(db, month)
+    limits = _budgets_for(db, month)
+
+    today = date.today()
+    days = _month_days(month)
+    if month < today.strftime("%Y-%m"):
+        pace = 1.0
+    elif month > today.strftime("%Y-%m"):
+        pace = 0.0
+    else:
+        pace = today.day / days
+
+    rows = []
+    for cid, limit in limits.items():
+        if cid is None:
+            continue
+        spent = spend.get(cid, Decimal(0))
+        rows.append(
+            {
+                "category_id": cid,
+                "name": categories.get(cid, "Uncategorized"),
+                "budget": float(limit),
+                "spent": float(spent),
+                "remaining": float(limit - spent),
+                "fraction": float(spent / limit) if limit else 0.0,
+                # Over the pro-rata line for how far through the month we are.
+                "over_pace": pace > 0 and float(spent) > float(limit) * pace,
+            }
+        )
+    rows.sort(key=lambda r: -r["fraction"])
+
+    budgeted_ids = {r["category_id"] for r in rows}
+    unbudgeted = float(
+        sum((v for cid, v in spend.items() if cid not in budgeted_ids), Decimal(0))
+    )
+    total_spent = float(sum(spend.values(), Decimal(0)))
+    overall = limits.get(None)
+    return {
+        "month": month,
+        "pace_fraction": pace,
+        "days_in_month": days,
+        "categories": rows,
+        "total_spent": total_spent,
+        "unbudgeted_spent": unbudgeted,
+        "overall_budget": float(overall) if overall is not None else None,
+    }
+
+
+def average_category_spend(db: Session, months: int = 12) -> dict[int, float]:
+    """Mean monthly spend per category over the trailing window — the seed for
+    "set budgets from my averages". Keyed by category id (no uncategorized)."""
+    overview = monthly_overview(db, months=months)
+    n = len(overview["months"]) or 1
+    totals: dict[int, float] = defaultdict(float)
+    for m in overview["months"]:
+        for cid, v in m["by_category"].items():
+            if int(cid) != 0 and v > 0:
+                totals[int(cid)] += v
+    return {cid: total / n for cid, total in totals.items()}

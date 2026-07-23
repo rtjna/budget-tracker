@@ -493,6 +493,100 @@ def stats_coverage(db: Session = Depends(get_db)):
     return coverage(db)
 
 
+@app.get("/api/stats/budget/{month}")
+def stats_budget(month: str, db: Session = Depends(get_db)):
+    from .stats import budget_summary
+
+    return budget_summary(db, month)
+
+
+class BudgetBody(BaseModel):
+    category_id: int | None = None  # None = the overall (all-categories) limit
+    amount: float
+    effective_from: date | None = None  # defaults to the first of this month
+
+
+@app.get("/api/budgets")
+def list_budgets(db: Session = Depends(get_db)):
+    from .stats import average_category_spend
+
+    rows = db.scalars(
+        select(models.Budget).order_by(models.Budget.effective_from.desc())
+    ).all()
+    return {
+        "budgets": [
+            {
+                "id": b.id,
+                "category_id": b.category_id,
+                "amount": float(b.amount),
+                "effective_from": b.effective_from,
+            }
+            for b in rows
+        ],
+        # Trailing-12 average spend per category, so the UI can offer "seed
+        # from your averages" and show a suggested figure next to each.
+        "averages": average_category_spend(db),
+    }
+
+
+@app.put("/api/budgets")
+def set_budget(body: BudgetBody, db: Session = Depends(get_db)):
+    """Create or update the limit for a category. Setting the amount to 0 or
+    less removes the budget (any effective_from row for that category)."""
+    from datetime import date as _date
+
+    eff = body.effective_from or _date.today().replace(day=1)
+    eff = eff.replace(day=1)  # budgets are per-month; normalize to the first
+    existing = db.scalar(
+        select(models.Budget).where(
+            models.Budget.category_id == body.category_id,
+            models.Budget.effective_from == eff,
+        )
+    )
+    if body.amount <= 0:
+        if existing is not None:
+            db.delete(existing)
+            db.commit()
+        return {"deleted": True, "category_id": body.category_id}
+    if existing is not None:
+        existing.amount = body.amount
+    else:
+        db.add(
+            models.Budget(category_id=body.category_id, amount=body.amount, effective_from=eff)
+        )
+    db.commit()
+    return {"category_id": body.category_id, "amount": body.amount, "effective_from": eff}
+
+
+@app.post("/api/budgets/seed")
+def seed_budgets(db: Session = Depends(get_db)):
+    """Set a budget for every category that lacks one, at its rounded
+    trailing-12 average. Existing budgets are left untouched."""
+    from datetime import date as _date
+
+    from .stats import average_category_spend
+
+    eff = _date.today().replace(day=1)
+    have = {
+        b.category_id
+        for b in db.scalars(
+            select(models.Budget).where(models.Budget.effective_from == eff)
+        )
+    }
+    created = 0
+    for cid, avg in average_category_spend(db).items():
+        if cid in have or avg < 1:
+            continue
+        db.add(
+            models.Budget(
+                category_id=cid, amount=round(avg / 5) * 5 or 5, effective_from=eff
+            )
+        )
+        created += 1
+    db.commit()
+    return {"created": created}
+
+
 @app.get("/api/stats/recurring")
 def stats_recurring(db: Session = Depends(get_db)):
     from .stats import recurring

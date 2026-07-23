@@ -81,6 +81,57 @@ class TripReviewVerdict(Base):
     __table_args__ = (UniqueConstraint("trip_id", "transaction_id"),)
 
 
+class Budget(Base):
+    """A monthly spending limit for one category, effective from a given month
+    onward. Keeping effective_from means a historical month is judged against
+    the budget that applied *then*, and changing a limit never rewrites the
+    past. The latest budget with effective_from <= a month's start applies to
+    that month; category_id NULL is the overall (all-categories) budget."""
+
+    __tablename__ = "budgets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categories.id"), nullable=True
+    )
+    amount: Mapped[float] = mapped_column(Numeric(12, 2))
+    # First month the limit applies, stored as the first of that month.
+    effective_from: Mapped[date] = mapped_column(Date)
+
+    __table_args__ = (UniqueConstraint("category_id", "effective_from"),)
+
+
+class BalanceSnapshot(Base):
+    """A manually entered account balance on a date. The app tracks flows, not
+    stock; snapshots give a net-worth line and double as a reconciliation check
+    (two snapshots should differ by the sum of transactions between them)."""
+
+    __tablename__ = "balance_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    balance: Mapped[float] = mapped_column(Numeric(12, 2))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("account_id", "date"),)
+
+
+class MonthlyRate(Base):
+    """A currency's GBP conversion rate for one month. When present it overrides
+    the static GBP_RATES fallback, so historical foreign-currency transactions
+    convert at a period-appropriate rate instead of today's."""
+
+    __tablename__ = "monthly_rates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    currency: Mapped[str] = mapped_column(String, index=True)
+    month: Mapped[str] = mapped_column(String)  # "YYYY-MM"
+    rate: Mapped[float] = mapped_column(Numeric(18, 8))
+
+    __table_args__ = (UniqueConstraint("currency", "month"),)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 

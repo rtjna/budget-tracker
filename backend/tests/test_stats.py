@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import Account, Category, Transaction
+from app.models import Account, Budget, Category, Transaction
 from app.stats import category_merchants, month_detail, monthly_overview, recurring
 
 
@@ -336,6 +336,65 @@ def test_month_insights_spike_new_merchant_and_large_tx():
     # A steady month reports no spike, and month one has no baseline noise.
     assert month_insights(db, "2026-05")["findings"] == []
     assert month_insights(db, "2025-07")["findings"] == []
+
+
+def test_budget_summary_effective_from_and_pace():
+    from app.stats import budget_summary
+
+    db, gbp, _, groceries, _ = make_db()
+    coffee = Category(name="Coffee")
+    db.add(coffee)
+    db.flush()
+    # A limit that changed mid-year: £200 from Jan, raised to £300 from June.
+    db.add_all(
+        [
+            Budget(category_id=groceries.id, amount=200, effective_from=date(2026, 1, 1)),
+            Budget(category_id=groceries.id, amount=300, effective_from=date(2026, 6, 1)),
+        ]
+    )
+    add(db, gbp, date(2026, 5, 20), "TESCO", "-220.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 10), "TESCO", "-150.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 15), "PRET", "-40.00", cat=coffee.id)  # unbudgeted
+    db.commit()
+
+    may = budget_summary(db, "2026-05")
+    (g,) = [c for c in may["categories"] if c["name"] == "Groceries"]
+    assert g["budget"] == 200.0 and g["spent"] == 220.0  # judged against the old limit
+    assert g["remaining"] == -20.0
+    assert may["pace_fraction"] == 1.0  # a past month is fully elapsed
+
+    june = budget_summary(db, "2026-06")
+    (g,) = [c for c in june["categories"] if c["name"] == "Groceries"]
+    assert g["budget"] == 300.0 and g["spent"] == 150.0  # the raised limit applies
+    assert june["unbudgeted_spent"] == 40.0  # the Pret coffee
+
+
+def test_budget_summary_ignores_income_rows():
+    from app.stats import budget_summary
+
+    db, gbp, _, groceries, _ = make_db()
+    db.add(Budget(category_id=groceries.id, amount=100, effective_from=date(2026, 1, 1)))
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-30.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 9), "TESCO", "10.00", cat=groceries.id)  # refund
+    add(db, gbp, date(2026, 6, 28), "SALARY", "3000.00")
+    db.commit()
+
+    s = budget_summary(db, "2026-06")
+    (g,) = [c for c in s["categories"] if c["name"] == "Groceries"]
+    assert g["spent"] == 20.0  # refund nets off; salary never appears
+    assert s["total_spent"] == 20.0
+
+
+def test_average_category_spend():
+    from app.stats import average_category_spend
+
+    db, gbp, _, groceries, _ = make_db()
+    for month in (4, 5, 6):
+        add(db, gbp, date(2026, month, 5), "TESCO", "-60.00", cat=groceries.id)
+    db.commit()
+    avgs = average_category_spend(db, months=12)
+    # 180 spent across a 3-month span → 60/month.
+    assert round(avgs[groceries.id]) == 60
 
 
 def test_month_insights_lapsed_subscription():
