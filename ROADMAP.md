@@ -34,18 +34,25 @@ remains.
 
 The forward-looking backlog now lives in
 [docs/advisory-2026-07.md](docs/advisory-2026-07.md) (a finance-insight and a
-design review). The larger unbuilt themes:
+design review). Most of the roadmap themes are now built:
 
-- **Budgets** — partially started (savings rate, committed-vs-discretionary
-  split). Still to do: monthly category budgets with mid-month pace tracking,
-  budget-vs-actual on the dashboard, a "safe to spend" figure. Now that there
-  are months of clean data, limits can be set realistically.
-- **Net worth** — the app tracks flows, not balances. Manual balance snapshots
-  (which double as import-gap reconciliation) would give a net-worth line; see
-  the advisory report.
-- **Data quality** — dated FX rates: conversion currently uses one static
-  rate table applied to all history, which distorts trends and trip totals for
-  older foreign-currency transactions.
-- **Hardening & always-on** — move the container to a home server / Pi / VPS;
-  add simple auth + HTTPS if it ever leaves localhost; automated SQLite
-  backups; data export (CSV/JSON) so you're never locked in.
+- **Budgets** — *done*: per-category monthly limits with mid-month pace
+  tracking, budget-vs-actual, seed-from-averages, plus savings rate and the
+  committed-vs-discretionary split. (A "safe to spend" figure and budget
+  rollover remain as possible refinements.)
+- **Net worth** — *done*: manual balance snapshots give a net-worth line and
+  double as an import-gap reconciliation check.
+- **Dated FX rates** — *done*: per-month rate overrides supersede the static
+  table, so historical foreign-currency months convert at a period-accurate
+  rate. Only the mechanism ships; historical rates are entered by hand.
+- **Data export & backups** — *done*: CSV / full-JSON export from the Data
+  tab, and `scripts/backup.sh` for timestamped SQLite backups.
+
+Still open:
+
+- **Always-on deployment** — move the container to a home server / Pi / VPS,
+  and add simple auth + HTTPS if it ever leaves localhost. Deliberately not
+  built yet: it depends on where (if anywhere) this gets hosted. Today it
+  assumes a trusted single user on localhost.
+- Refinements from the advisory report (income sub-breakdown, YoY /
+  seasonality, tax-year view + ISA tracking, anomaly narration, etc.).
