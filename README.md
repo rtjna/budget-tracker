@@ -2,11 +2,68 @@
 
 A personal, self-hosted spending tracker for UK bank accounts, fed by CSV
 imports (and optionally the Monzo API), with a categorization engine that
-learns from corrections.
+learns from corrections and a dashboard built to teach you something rather
+than just file transactions.
 
 Single-user, non-commercial. See [ROADMAP.md](ROADMAP.md) for the plan,
 [PRIVACY.md](PRIVACY.md) for the privacy notice, and [TERMS.md](TERMS.md)
 for terms of use.
+
+## What it does
+
+**Getting data in**
+
+- Drag-and-drop import of CSV / Excel exports and Barclays PDF statements —
+  drop files anywhere in the app; the bank and format are detected
+  automatically and re-imports are deduplicated.
+- Per-bank importers (Amex, Barclays, Barclaycard, Revolut, Monzo), plus
+  optional live sync from the Monzo personal API.
+- **Splitwise** integration: pulls your shared-expense balances and applies
+  corrections so a split bill only ever counts your actual share.
+- A **Data** tab with a coverage heatmap showing which accounts have data for
+  which months, and a staleness nudge when an account hasn't been fed lately.
+
+**Categorization**
+
+- Layered categorizer, each layer firing only when the previous abstains:
+  deterministic rules → a local ML model (trained on your own corrections) →
+  the Claude API as a fallback → a human review queue.
+- Merchant-grouped review queue with one-click "always categorize X as Y"
+  rules, plus a "second opinions" audit that flags automatic labels the local
+  model confidently disagrees with.
+
+**Multi-account intelligence**
+
+- Automatic transfer detection links both legs of money moved between your own
+  accounts (card payments, top-ups) so they never count as spending or income.
+- Investing is tracked as a separate net-invested figure rather than as
+  spending or income; unknown-currency rows are excluded from GBP totals
+  rather than converted at a wrong rate, and reported so the total is honest.
+
+**Dashboards & insights**
+
+- Monthly spending stacked by category, income vs spending, per-month
+  detail, an average-of-the-last-12-months pseudo-month, a per-category
+  drill-down with merchant tables and trends, and a whole-year view with each
+  category's share of the year.
+- **Savings rate** and a **committed-vs-discretionary** split of each month's
+  spending.
+- Recurring-payment / subscription detection with price-change flags and
+  next-expected dates.
+- A **"what changed this month"** panel: category spikes vs the trailing-12
+  median, subscription price changes, lapsed subscriptions, first-ever
+  merchants, and the largest one-off payments — computed locally, nothing
+  sent anywhere.
+- Click any category, merchant, or month figure to drill through to the
+  transactions behind it.
+
+**Trips**
+
+- Group spending into named, date-bounded trips (orthogonal to categories, so
+  a dinner abroad is still Eating Out *and* part of the trip). Claude reviews
+  every candidate payment in the trip window — plus four months before for
+  prepaid flights and hotels and a month after for late charges — and suggests
+  which belong; you confirm. Trip totals never distort the regular stats.
 
 ## Running (development)
 
