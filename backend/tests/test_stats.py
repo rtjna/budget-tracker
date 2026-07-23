@@ -5,7 +5,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import Account, BalanceSnapshot, Budget, Category, Transaction
+from app.models import (
+    Account,
+    BalanceSnapshot,
+    Budget,
+    Category,
+    MonthlyRate,
+    Transaction,
+)
 from app.stats import category_merchants, month_detail, monthly_overview, recurring
 
 
@@ -395,6 +402,33 @@ def test_average_category_spend():
     avgs = average_category_spend(db, months=12)
     # 180 spent across a 3-month span → 60/month.
     assert round(avgs[groceries.id]) == 60
+
+
+def test_dated_fx_rate_overrides_static_with_fallback():
+    from app.stats import load_rate_book, to_gbp
+
+    db, gbp, jpy, groceries, _ = make_db()
+    # A JPY rate for June 2024 only; other months fall back to the static 0.005.
+    db.add(MonthlyRate(currency="JPY", month="2024-06", rate="0.0060"))
+    db.commit()
+    rates = load_rate_book(db)
+
+    assert to_gbp(Decimal("1000"), "JPY", date(2024, 6, 15), rates) == Decimal("6.000")
+    # A month with no override uses the static table.
+    assert to_gbp(Decimal("1000"), "JPY", date(2026, 6, 15), rates) == Decimal("5.000")
+    # No rate book at all → static, unchanged legacy behaviour.
+    assert to_gbp(Decimal("1000"), "JPY") == Decimal("5.000")
+
+
+def test_overview_uses_dated_rate_when_present():
+    db, gbp, jpy, groceries, _ = make_db()
+    add(db, jpy, date(2024, 6, 7), "RAMEN", "-2000", cat=groceries.id)
+    db.add(MonthlyRate(currency="JPY", month="2024-06", rate="0.0060"))
+    db.commit()
+
+    data = monthly_overview(db, months=60)
+    (june,) = [m for m in data["months"] if m["month"] == "2024-06"]
+    assert june["spending"] == 12.0  # ¥2000 * 0.006, not the static 0.005 (=10)
 
 
 def test_net_worth_anchors_on_snapshot_and_reconciles():

@@ -13,7 +13,7 @@ from statistics import median
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Account, BalanceSnapshot, Budget, Category, Transaction
+from .models import Account, BalanceSnapshot, Budget, Category, MonthlyRate, Transaction
 
 # Approximate GBP conversion rates (mid-2026). Update occasionally by hand.
 GBP_RATES = {
@@ -68,10 +68,32 @@ def _income_category(tx, income_id) -> bool:
     )
 
 
-def to_gbp(amount: Decimal, currency: str) -> Decimal:
-    """Convert to GBP. Refuses unknown currencies loudly — a silent 1:1
-    fallback would misstate totals by an order of magnitude (audit H1).
-    Callers filter with GBP_RATES first and report exclusions."""
+# A rate book: currency -> {"YYYY-MM": Decimal}. Loaded from MonthlyRate rows
+# and passed into to_gbp so a 2024 transaction converts at a 2024 rate instead
+# of today's. Absent an entry, to_gbp falls back to the static GBP_RATES.
+RateBook = dict
+
+
+def load_rate_book(db: Session) -> RateBook:
+    book: dict[str, dict[str, Decimal]] = defaultdict(dict)
+    for r in db.scalars(select(MonthlyRate)):
+        book[r.currency][r.month] = Decimal(str(r.rate))
+    return book
+
+
+def to_gbp(
+    amount: Decimal, currency: str, on: date | None = None, rates: RateBook | None = None
+) -> Decimal:
+    """Convert to GBP. When a per-month rate is known for the transaction's
+    date it is used; otherwise the static GBP_RATES table. Refuses unknown
+    currencies loudly — a silent 1:1 fallback would misstate totals by an
+    order of magnitude (audit H1). Callers filter with GBP_RATES first and
+    report exclusions."""
+    if rates is not None and on is not None:
+        month = on if isinstance(on, str) else on.strftime("%Y-%m")
+        dated = rates.get(currency, {}).get(month)
+        if dated is not None:
+            return Decimal(amount) * dated
     rate = GBP_RATES.get(currency)
     if rate is None:
         raise ValueError(f"No GBP rate configured for {currency!r} — add it to GBP_RATES")
@@ -123,6 +145,7 @@ def _invested_by_month(db: Session) -> dict[str, Decimal]:
     invested: dict[str, Decimal] = defaultdict(Decimal)
     if investing_id is None:
         return invested
+    rates = load_rate_book(db)
     txs = db.scalars(
         select(Transaction)
         .options(joinedload(Transaction.account))
@@ -134,7 +157,9 @@ def _invested_by_month(db: Session) -> dict[str, Decimal]:
     for tx in txs:
         if tx.account.currency not in GBP_RATES:
             continue
-        invested[tx.date.strftime("%Y-%m")] += -to_gbp(tx.amount, tx.account.currency)
+        invested[tx.date.strftime("%Y-%m")] += -to_gbp(
+            tx.amount, tx.account.currency, tx.date, rates
+        )
     return invested
 
 
@@ -160,6 +185,7 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
     # Recurring merchants count as committed wherever they're categorized —
     # a gym membership is committed even though Sports isn't.
     recurring_merchants = {r["merchant"] for r in recurring(db)}
+    rates = load_rate_book(db)
 
     def _is_committed(tx) -> bool:
         return tx.category_id in committed_ids or tx.merchant in recurring_merchants
@@ -174,7 +200,7 @@ def monthly_overview(db: Session, months: int = 12) -> dict:
     )
 
     for tx in txs:
-        gbp = to_gbp(tx.amount, tx.account.currency)
+        gbp = to_gbp(tx.amount, tx.account.currency, tx.date, rates)
         month = tx.date.strftime("%Y-%m")
         bucket = by_month[month]
         if _income_category(tx, income_id):
@@ -255,6 +281,7 @@ def year_summary(db: Session, year: int | None = None) -> dict:
 
     categories = {c.id: c.name for c in db.scalars(select(Category))}
     income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    rates = load_rate_book(db)
     spending = income = Decimal(0)
     by_category: dict[int | None, Decimal] = defaultdict(Decimal)
     by_merchant: dict[str, dict] = defaultdict(lambda: {"total": Decimal(0), "count": 0})
@@ -267,7 +294,7 @@ def year_summary(db: Session, year: int | None = None) -> dict:
     for tx in txs:
         if tx.date.year != year:
             continue
-        gbp = to_gbp(tx.amount, tx.account.currency)
+        gbp = to_gbp(tx.amount, tx.account.currency, tx.date, rates)
         if _income_category(tx, income_id):
             income += gbp  # signed: back-paid tax reduces income
         elif gbp < 0:
@@ -326,11 +353,12 @@ def month_detail(db: Session, month: str) -> dict:
         and (t.amount < 0 or not _is_income(t, income_id))
     ]
     categories = {c.id: c.name for c in db.scalars(select(Category))}
+    rates = load_rate_book(db)
 
     by_category: dict[int | None, Decimal] = defaultdict(Decimal)
     by_merchant: dict[str, dict] = defaultdict(lambda: {"total": Decimal(0), "count": 0})
     for tx in txs:
-        gbp = -to_gbp(tx.amount, tx.account.currency)  # refunds subtract
+        gbp = -to_gbp(tx.amount, tx.account.currency, tx.date, rates)  # refunds subtract
         by_category[tx.category_id] += gbp
         m = by_merchant[tx.merchant or tx.description]
         m["total"] += gbp
@@ -411,6 +439,7 @@ def category_merchants(db: Session, category_id: int, months: int = 12) -> dict:
     semantics: positive categorized amounts subtract from their merchant."""
     txs = _spending_transactions(db)
     income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    rates = load_rate_book(db)
     # Same window anchor as monthly_overview: latest month with any activity.
     all_keys = sorted({t.date.strftime("%Y-%m") for t in txs})
     window = set(_calendar_window(all_keys, months))
@@ -423,7 +452,7 @@ def category_merchants(db: Session, category_id: int, months: int = 12) -> dict:
         if tx.amount > 0 and _is_income(tx, income_id):
             continue  # income, not a refund
         m = by_merchant[tx.merchant or tx.description]
-        m["total"] += -to_gbp(tx.amount, tx.account.currency)
+        m["total"] += -to_gbp(tx.amount, tx.account.currency, tx.date, rates)
         m["count"] += 1
 
     return {
@@ -450,6 +479,7 @@ def recurring(db: Session) -> list[dict]:
     interval and steady amount."""
     txs = [t for t in _spending_transactions(db) if t.amount < 0 and t.merchant]
     categories = {c.id: c.name for c in db.scalars(select(Category))}
+    rates = load_rate_book(db)
 
     by_merchant: dict[str, list[Transaction]] = defaultdict(list)
     for t in txs:
@@ -475,13 +505,13 @@ def recurring(db: Session) -> list[dict]:
         regular = sum(1 for i in intervals if abs(i - med) <= tolerance)
         if regular / len(intervals) < 0.7:
             continue
-        amounts = [-to_gbp(t.amount, t.account.currency) for t in group]
+        amounts = [-to_gbp(t.amount, t.account.currency, t.date, rates) for t in group]
         typical = median(amounts)
         # Steady amount: recurring bills shouldn't swing wildly.
         if typical == 0 or (max(amounts) - min(amounts)) / typical > 0.6:
             continue
         last_tx = group[-1]
-        last_amount = -to_gbp(last_tx.amount, last_tx.account.currency)
+        last_amount = -to_gbp(last_tx.amount, last_tx.account.currency, last_tx.date, rates)
         active = (today - dates[-1]).days <= med * 1.6
         results.append(
             {
@@ -637,6 +667,7 @@ def _category_spend(db: Session, month: str) -> dict[int | None, Decimal]:
     """Per-category GBP spend for one month, refund semantics applied — the
     same numbers the month view shows. Income-side rows are excluded."""
     income_id = db.scalar(select(Category.id).where(Category.name == "Income"))
+    rates = load_rate_book(db)
     by_category: dict[int | None, Decimal] = defaultdict(Decimal)
     for tx in _spending_transactions(db):
         if tx.date.strftime("%Y-%m") != month:
@@ -645,7 +676,7 @@ def _category_spend(db: Session, month: str) -> dict[int | None, Decimal]:
             continue
         if tx.amount > 0 and _is_income(tx, income_id):
             continue
-        by_category[tx.category_id] += -to_gbp(tx.amount, tx.account.currency)
+        by_category[tx.category_id] += -to_gbp(tx.amount, tx.account.currency, tx.date, rates)
     return by_category
 
 

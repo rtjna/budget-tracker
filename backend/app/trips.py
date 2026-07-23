@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from .llm import MODEL, _make_client, _parse_batch
 from .models import Category, Transaction, Trip, TripReviewVerdict
-from .stats import GBP_RATES, to_gbp
+from .stats import GBP_RATES, load_rate_book, to_gbp
 
 BEFORE_DAYS = 120  # flights are often booked ~4 months out
 AFTER_DAYS = 30
@@ -202,12 +202,13 @@ def trip_stats(db: Session, trip: Trip) -> dict:
         .where(Transaction.trip_id == trip.id, Transaction.transfer_peer_id.is_(None))
     ).all()
     categories = {c.id: c.name for c in db.scalars(select(Category))}
+    rates = load_rate_book(db)
     total = Decimal(0)
     by_category: dict[int | None, Decimal] = {}
     for t in txs:
         if t.account.currency not in GBP_RATES:
             continue
-        gbp = -to_gbp(t.amount, t.account.currency)
+        gbp = -to_gbp(t.amount, t.account.currency, t.date, rates)
         total += gbp
         by_category[t.category_id] = by_category.get(t.category_id, Decimal(0)) + gbp
     days = (trip.end_date - trip.start_date).days + 1

@@ -531,6 +531,8 @@ export default function App() {
           )}
 
           <Coverage />
+
+          <RatesEditor />
         </>
       )}
 
@@ -895,6 +897,110 @@ function AddTransaction({
       </button>
       {error && <span className="error">{error}</span>}
     </div>
+  )
+}
+
+type RateData = {
+  static: Record<string, number>
+  overrides: { id: number; currency: string; month: string; rate: number }[]
+}
+
+// Manage per-month exchange-rate overrides. The static table converts every
+// month by default; an override pins a specific month to a period-accurate
+// rate so historical foreign-currency trends aren't distorted by today's.
+function RatesEditor() {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<RateData | null>(null)
+  const [form, setForm] = useState({ currency: '', month: '', rate: '' })
+
+  const load = () =>
+    api('/api/rates')
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => {})
+  useEffect(() => {
+    if (open && !data) load()
+  }, [open])
+
+  async function save(currency: string, month: string, rate: number) {
+    await api('/api/rates', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currency, month, rate }),
+    })
+    load()
+  }
+
+  return (
+    <section className="rates-editor">
+      <button
+        className="table-toggle"
+        onClick={() => setOpen(!open)}
+        data-tip="Pin a specific month's conversion rate for a currency, so old foreign-currency transactions convert at a period-accurate rate instead of today's"
+      >
+        {open ? '× Close exchange rates' : '💱 Exchange rate overrides'}
+      </button>
+      {open && data && (
+        <div className="rates-body">
+          <p className="review-meta">
+            Without an override, every month uses the built-in rate table. Add one to correct a
+            specific month.
+          </p>
+          <div className="rates-form">
+            <input
+              placeholder="Currency (e.g. JPY)"
+              value={form.currency}
+              maxLength={3}
+              onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
+            />
+            <input
+              placeholder="Month (YYYY-MM)"
+              value={form.month}
+              onChange={(e) => setForm({ ...form, month: e.target.value })}
+            />
+            <input
+              placeholder="GBP per unit (e.g. 0.006)"
+              type="number"
+              step="0.0001"
+              value={form.rate}
+              onChange={(e) => setForm({ ...form, rate: e.target.value })}
+            />
+            <button
+              className="btn-primary"
+              disabled={!/^[A-Z]{3}$/.test(form.currency) || !/^\d{4}-\d{2}$/.test(form.month) || !form.rate}
+              onClick={async () => {
+                await save(form.currency, form.month, Number(form.rate))
+                setForm({ currency: '', month: '', rate: '' })
+              }}
+            >
+              Add override
+            </button>
+          </div>
+          {data.overrides.length > 0 && (
+            <table className="mini-table">
+              <tbody>
+                {data.overrides.map((o) => (
+                  <tr key={o.id}>
+                    <td>{o.currency}</td>
+                    <td className="muted">{o.month}</td>
+                    <td className="num">{o.rate}</td>
+                    <td className="row-actions">
+                      <button
+                        className="delete-btn"
+                        data-tip="Remove this override (revert to the built-in rate)"
+                        onClick={() => save(o.currency, o.month, 0)}
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 

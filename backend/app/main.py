@@ -565,6 +565,57 @@ def stats_networth(db: Session = Depends(get_db), months: int = Query(default=12
     return net_worth(db, months=months)
 
 
+class RateBody(BaseModel):
+    currency: str
+    month: str  # "YYYY-MM"
+    rate: float
+
+
+@app.get("/api/rates")
+def list_rates(db: Session = Depends(get_db)):
+    """Configured conversion rates: the static fallback table (applied to any
+    month without an override) plus per-month overrides that supersede it."""
+    from .stats import GBP_RATES
+
+    overrides = db.scalars(
+        select(models.MonthlyRate).order_by(
+            models.MonthlyRate.currency, models.MonthlyRate.month.desc()
+        )
+    ).all()
+    return {
+        "static": {c: float(r) for c, r in GBP_RATES.items()},
+        "overrides": [
+            {"id": r.id, "currency": r.currency, "month": r.month, "rate": float(r.rate)}
+            for r in overrides
+        ],
+    }
+
+
+@app.put("/api/rates")
+def set_rate(body: RateBody, db: Session = Depends(get_db)):
+    import re
+
+    if not re.fullmatch(r"\d{4}-\d{2}", body.month):
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM")
+    currency = body.currency.upper()
+    existing = db.scalar(
+        select(models.MonthlyRate).where(
+            models.MonthlyRate.currency == currency, models.MonthlyRate.month == body.month
+        )
+    )
+    if body.rate <= 0:
+        if existing is not None:
+            db.delete(existing)
+            db.commit()
+        return {"deleted": True, "currency": currency, "month": body.month}
+    if existing is not None:
+        existing.rate = body.rate
+    else:
+        db.add(models.MonthlyRate(currency=currency, month=body.month, rate=body.rate))
+    db.commit()
+    return {"currency": currency, "month": body.month, "rate": body.rate}
+
+
 class SnapshotBody(BaseModel):
     account_id: int
     date: date
