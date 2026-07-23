@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -491,6 +492,82 @@ def stats_coverage(db: Session = Depends(get_db)):
     from .stats import coverage
 
     return coverage(db)
+
+
+@app.get("/api/export/transactions.csv")
+def export_transactions_csv(db: Session = Depends(get_db)):
+    """Every transaction as CSV — human-readable names resolved, so the export
+    stands on its own. No account numbers or balances (none are stored)."""
+    import csv
+    import io
+
+    accounts = {a.id: a for a in db.scalars(select(models.Account))}
+    categories = {c.id: c.name for c in db.scalars(select(models.Category))}
+    trips = {t.id: t.name for t in db.scalars(select(models.Trip))}
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        ["date", "account", "currency", "description", "merchant", "amount",
+         "category", "source", "transfer", "trip"]
+    )
+    for t in db.scalars(select(models.Transaction).order_by(models.Transaction.date)):
+        acc = accounts.get(t.account_id)
+        writer.writerow(
+            [
+                t.date.isoformat(),
+                acc.name if acc else "",
+                acc.currency if acc else "",
+                t.description,
+                t.merchant or "",
+                f"{float(t.amount):.2f}",
+                categories.get(t.category_id, ""),
+                t.category_source or "",
+                "yes" if t.transfer_peer_id is not None else "",
+                trips.get(t.trip_id, "") if t.trip_id else "",
+            ]
+        )
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=transactions-{date.today()}.csv"},
+    )
+
+
+@app.get("/api/export/all.json")
+def export_all_json(db: Session = Depends(get_db)):
+    """A complete, portable dump of your data (accounts, categories, rules,
+    transactions, budgets, balance snapshots, rate overrides, trips) so you're
+    never locked in. Pairs with scripts/backup.sh, which copies the raw DB."""
+    from fastapi.encoders import jsonable_encoder
+
+    def rows(model, cols):
+        return [
+            {c: getattr(r, c) for c in cols} for r in db.scalars(select(model))
+        ]
+
+    payload = {
+        "exported_at": date.today().isoformat(),
+        "accounts": rows(models.Account, ["id", "name", "provider", "kind", "currency"]),
+        "categories": rows(models.Category, ["id", "name", "parent_id"]),
+        "rules": rows(models.Rule, ["id", "match", "pattern", "category_id"]),
+        "transactions": rows(
+            models.Transaction,
+            ["id", "account_id", "date", "description", "merchant", "amount",
+             "category_id", "category_source", "transfer_peer_id", "trip_id"],
+        ),
+        "budgets": rows(models.Budget, ["id", "category_id", "amount", "effective_from"]),
+        "balance_snapshots": rows(
+            models.BalanceSnapshot, ["id", "account_id", "date", "balance"]
+        ),
+        "monthly_rates": rows(models.MonthlyRate, ["id", "currency", "month", "rate"]),
+        "trips": rows(models.Trip, ["id", "name", "start_date", "end_date"]),
+    }
+    return Response(
+        content=__import__("json").dumps(jsonable_encoder(payload), indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=budget-backup-{date.today()}.json"},
+    )
 
 
 @app.get("/api/stats/budget/{month}")

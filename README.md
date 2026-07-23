@@ -92,3 +92,14 @@ bank CSV exports in `bank-exports/`. Import CSVs through the app's drop-zone
 directly from wherever they were downloaded — they never need to enter the
 project folder. Nothing under the project directory holds financial data,
 and export formats are gitignored as a second line of defence.
+
+## Backups & export
+
+You're never locked in:
+
+- **`scripts/backup.sh`** — a consistent, timestamped, gzipped copy of the
+  SQLite database (keeps the last 14; honours `DATA_DIR`). Run it by hand or
+  from cron (`0 3 * * * /path/to/scripts/backup.sh` for a nightly backup).
+- **Data tab → Export** — download every transaction as CSV, or a complete
+  JSON dump of all your data (accounts, categories, rules, transactions,
+  budgets, balance snapshots, rate overrides, trips).

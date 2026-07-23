@@ -532,6 +532,16 @@ export default function App() {
 
           <Coverage />
 
+          <section className="data-export">
+            <span className="review-meta">Export your data — you're never locked in:</span>
+            <a className="export-link" href="/api/export/transactions.csv" download>
+              ⬇ Transactions (CSV)
+            </a>
+            <a className="export-link" href="/api/export/all.json" download>
+              ⬇ Full backup (JSON)
+            </a>
+          </section>
+
           <RatesEditor />
         </>
       )}
