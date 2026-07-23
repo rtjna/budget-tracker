@@ -92,7 +92,7 @@ function niceTicks(max: number): number[] {
 
 export default function Dashboard({ onDrill }: { onDrill: (f: DrillFilter) => void }) {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [view, setView] = useState<'time' | 'category' | 'year' | 'budgets' | 'trips'>('time')
+  const [view, setView] = useState<'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips'>('time')
   const [selected, setSelected] = useState('')
   const [selectedCat, setSelectedCat] = useState<number | null>(null)
   const [detail, setDetail] = useState<MonthDetail | null>(null)
@@ -215,6 +215,10 @@ export default function Dashboard({ onDrill }: { onDrill: (f: DrillFilter) => vo
         onDrill={onDrill}
       />
     )
+  }
+
+  if (view === 'networth') {
+    return <NetWorthView setView={setView} />
   }
 
   if (view === 'trips') {
@@ -460,7 +464,7 @@ function TripsView({
   setView,
   slotFill,
 }: {
-  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips') => void
   slotFill: (id: number) => string
 }) {
   const [trips, setTrips] = useState<TripStats[] | null>(null)
@@ -722,7 +726,7 @@ function YearView({
   slotFill,
   onDrill,
 }: {
-  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips') => void
   slotFill: (id: number) => string
   onDrill: (f: DrillFilter) => void
 }) {
@@ -852,7 +856,7 @@ function BudgetsView({
   months,
   onDrill,
 }: {
-  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips') => void
   categories: CategoryTotal[]
   months: string[]
   onDrill: (f: DrillFilter) => void
@@ -1087,12 +1091,375 @@ function BudgetEditor({
   )
 }
 
+type NetWorthData = {
+  series: { month: string; net_worth: number }[]
+  current: {
+    account_id: number
+    name: string
+    kind: string
+    currency: string
+    balance: number
+    balance_gbp: number | null
+    as_of: string
+  }[]
+  total: number
+  missing_snapshots: string[]
+  discrepancies: {
+    account_id: number
+    name: string
+    from: string
+    to: string
+    expected_change: number
+    actual_change: number
+    gap: number
+  }[]
+  excluded_currencies: string[]
+}
+
+type NwAccount = { id: number; name: string; currency: string; provider: string }
+type Snapshot = {
+  id: number
+  account_id: number
+  account_name: string
+  date: string
+  balance: number
+}
+
+function NetWorthView({
+  setView,
+}: {
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips') => void
+}) {
+  const [data, setData] = useState<NetWorthData | null>(null)
+  const [accounts, setAccounts] = useState<NwAccount[]>([])
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [error, setError] = useState('')
+
+  const load = () => {
+    api('/api/networth')
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setError('Could not load net worth.'))
+    api('/api/snapshots')
+      .then((r) => r.json())
+      .then(setSnapshots)
+      .catch(() => {})
+  }
+  useEffect(() => {
+    api('/api/accounts')
+      .then((r) => r.json())
+      .then((acc) => setAccounts(acc.filter((a: NwAccount & { provider: string }) => a.provider !== 'splitwise')))
+      .catch(() => {})
+    load()
+  }, [])
+
+  async function saveSnapshot(account_id: number, date: string, balance: number) {
+    await api('/api/snapshots', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id, date, balance }),
+    })
+    load()
+  }
+  async function deleteSnapshot(id: number) {
+    await api(`/api/snapshots/${id}`, { method: 'DELETE' })
+    load()
+  }
+
+  const assets = (data?.current ?? []).filter((c) => (c.balance_gbp ?? 0) >= 0)
+  const liabilities = (data?.current ?? []).filter((c) => (c.balance_gbp ?? 0) < 0)
+  const assetTotal = assets.reduce((s, c) => s + (c.balance_gbp ?? 0), 0)
+  const liabilityTotal = liabilities.reduce((s, c) => s + (c.balance_gbp ?? 0), 0)
+
+  return (
+    <section className="dash viz-root">
+      <div className="dash-filters">
+        <ViewSwitch view="networth" setView={setView} />
+        <span className="dash-note">
+          Balances are entered by hand as snapshots; transactions carry them forward between updates
+        </span>
+      </div>
+
+      {error && <p className="dash-warning">{error}</p>}
+
+      {data && data.current.length === 0 ? (
+        <p className="review-intro">
+          No balance snapshots yet. Enter each account's current balance below and net worth builds
+          from there — transactions carry it forward, and a second snapshot later cross-checks your
+          imports.
+        </p>
+      ) : (
+        data && (
+          <>
+            <div className="kpi-row">
+              <StatTile label="Net worth" value={gbp(data.total)} sub={`${data.current.length} accounts`} />
+              <StatTile label="Assets" value={gbp(assetTotal)} />
+              <StatTile
+                label="Liabilities"
+                value={gbp(liabilityTotal)}
+                tip="Negative balances (e.g. credit cards you owe)."
+              />
+            </div>
+
+            {data.series.length > 1 && (
+              <ChartCard title="Net worth over time">
+                <NetWorthChart series={data.series} />
+              </ChartCard>
+            )}
+          </>
+        )
+      )}
+
+      {data && data.discrepancies.length > 0 && (
+        <div className="chart-card">
+          <h3>⚠ Reconciliation check</h3>
+          <p className="review-intro">
+            Between these snapshots, your imported transactions don't add up to the balance change —
+            usually a missing import in that window.
+          </p>
+          <table className="mini-table">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Period</th>
+                <th className="num">Expected</th>
+                <th className="num">Actual</th>
+                <th className="num">Gap</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.discrepancies.map((d, i) => (
+                <tr key={i}>
+                  <td>{d.name}</td>
+                  <td className="muted">
+                    {d.from} → {d.to}
+                  </td>
+                  <td className="num">{gbp(d.expected_change)}</td>
+                  <td className="num">{gbp(d.actual_change)}</td>
+                  <td className="num" style={{ color: 'var(--money-out)' }}>
+                    {gbp(d.gap)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data && data.missing_snapshots.length > 0 && (
+        <p className="dash-warning">
+          No snapshot yet for: {data.missing_snapshots.join(', ')} — these accounts aren't counted in
+          net worth until you enter a balance.
+        </p>
+      )}
+
+      {data && data.current.length > 0 && (
+        <div className="chart-card">
+          <h3>Current balances</h3>
+          <table className="mini-table">
+            <tbody>
+              {data.current.map((c) => (
+                <tr key={c.account_id}>
+                  <td>{c.name}</td>
+                  <td className="muted">as of {c.as_of}</td>
+                  <td className="num">
+                    {c.currency} {c.balance.toFixed(2)}
+                  </td>
+                  <td className="num">{c.balance_gbp !== null ? gbp(c.balance_gbp) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <SnapshotEditor
+        accounts={accounts}
+        snapshots={snapshots}
+        onSave={saveSnapshot}
+        onDelete={deleteSnapshot}
+      />
+    </section>
+  )
+}
+
+function SnapshotEditor({
+  accounts,
+  snapshots,
+  onSave,
+  onDelete,
+}: {
+  accounts: NwAccount[]
+  snapshots: Snapshot[]
+  onSave: (accountId: number, date: string, balance: number) => void
+  onDelete: (id: number) => void
+}) {
+  const today = new Date().toISOString().slice(0, 10)
+  const [accountId, setAccountId] = useState(0)
+  const [date, setDate] = useState(today)
+  const [balance, setBalance] = useState('')
+
+  const currency = accounts.find((a) => a.id === accountId)?.currency ?? 'GBP'
+
+  return (
+    <div className="chart-card">
+      <h3>Record a balance</h3>
+      <div className="trip-form">
+        <label className="field">
+          <span className="field-label">Account</span>
+          <select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))}>
+            <option value={0} disabled>
+              Pick account…
+            </option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">As of</span>
+          <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
+        </label>
+        <label className="field">
+          <span className="field-label">Balance ({currency})</span>
+          <input
+            type="number"
+            step="0.01"
+            placeholder="e.g. 1500.00 (negative if owed)"
+            value={balance}
+            onChange={(e) => setBalance(e.target.value)}
+          />
+        </label>
+        <button
+          className="btn-primary"
+          disabled={!accountId || balance === ''}
+          onClick={() => {
+            onSave(accountId, date, Number(balance))
+            setBalance('')
+          }}
+          data-tip="Save this balance. Enter one per account; add a later one anytime to update and cross-check imports."
+        >
+          Save balance
+        </button>
+      </div>
+
+      {snapshots.length > 0 && (
+        <table className="mini-table" style={{ marginTop: '0.75rem' }}>
+          <tbody>
+            {snapshots.map((s) => (
+              <tr key={s.id}>
+                <td>{s.account_name}</td>
+                <td className="muted">{s.date}</td>
+                <td className="num">{s.balance.toFixed(2)}</td>
+                <td className="row-actions">
+                  <button
+                    className="delete-btn"
+                    data-tip="Delete this snapshot"
+                    onClick={() => onDelete(s.id)}
+                  >
+                    ×
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+function NetWorthChart({ series }: { series: { month: string; net_worth: number }[] }) {
+  const [hover, setHover] = useState<string | null>(null)
+  const values = series.map((s) => s.net_worth)
+  const maxV = Math.max(...values, 0)
+  const minV = Math.min(...values, 0)
+  const ticks = niceTicks(maxV)
+  const top = ticks[ticks.length - 1]
+  const bottom = minV < 0 ? -niceTicks(-minV)[niceTicks(-minV).length - 1] : 0
+  const plotW = W - PAD.left - PAD.right
+  const plotH = H - PAD.top - PAD.bottom
+  const band = plotW / series.length
+  const y = (v: number) => PAD.top + plotH - ((v - bottom) / (top - bottom)) * plotH
+  const x = (i: number) => PAD.left + band * i + band / 2
+  const pts = series.map((s, i) => `${x(i)},${y(s.net_worth)}`).join(' ')
+  const hovered = hover ? series.find((s) => s.month === hover) : null
+  const allTicks = [...ticks, ...(bottom < 0 ? niceTicks(-minV).slice(1).map((t) => -t) : [])]
+
+  return (
+    <>
+      <div className="chart-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" role="img" aria-label="Net worth over time">
+          {allTicks.map((t) => (
+            <g key={t}>
+              <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} className="gridline" />
+              <text x={PAD.left - 6} y={y(t) + 3} className="axis-text" textAnchor="end">
+                {Math.abs(t) >= 1000 ? `${(t / 1000).toLocaleString()}k` : t.toLocaleString()}
+              </text>
+            </g>
+          ))}
+          <polyline points={pts} fill="none" stroke="var(--accent)" strokeWidth={2} />
+          {series.map((s, i) => (
+            <g
+              key={s.month}
+              tabIndex={0}
+              role="img"
+              aria-label={`${monthLong(s.month)}: ${gbp(s.net_worth)}`}
+              onPointerEnter={() => setHover(s.month)}
+              onPointerLeave={() => setHover(null)}
+              onFocus={() => setHover(s.month)}
+              onBlur={() => setHover(null)}
+            >
+              <rect x={PAD.left + band * i} y={PAD.top} width={band} height={plotH + PAD.bottom} fill="transparent" />
+              <circle cx={x(i)} cy={y(s.net_worth)} r={hover === s.month ? 5 : 3} fill="var(--accent)" />
+              <text x={x(i)} y={H - 8} textAnchor="middle" className="axis-text">
+                {monthLabel(s.month)}
+              </text>
+            </g>
+          ))}
+        </svg>
+        {hovered && (
+          <div
+            className={`viz-tooltip ${
+              series.findIndex((s) => s.month === hovered.month) >= series.length / 2 ? 'left' : ''
+            }`}
+          >
+            <strong>{monthLong(hovered.month)}</strong>
+            <div className="tt-row">
+              <span className="tt-value">{gbp(hovered.net_worth)}</span>
+              <span className="tt-label">net worth</span>
+            </div>
+          </div>
+        )}
+      </div>
+      <table className="mini-table chart-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th className="num">Net worth</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.map((s) => (
+            <tr key={s.month}>
+              <td>{monthLong(s.month)}</td>
+              <td className="num">{gbp(s.net_worth)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  )
+}
+
 function ViewSwitch({
   view,
   setView,
 }: {
-  view: 'time' | 'category' | 'year' | 'budgets' | 'trips'
-  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
+  view: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips'
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips') => void
 }) {
   return (
     <span className="view-switch">
@@ -1125,6 +1492,13 @@ function ViewSwitch({
         Budgets
       </button>
       <button
+        className={view === 'networth' ? 'active' : ''}
+        onClick={() => setView('networth')}
+        data-tip="Your net worth over time from account-balance snapshots, with a reconciliation check against imported transactions"
+      >
+        Net worth
+      </button>
+      <button
         className={view === 'trips' ? 'active' : ''}
         onClick={() => setView('trips')}
         data-tip="What individual trips cost, all-in: flights booked months ahead, spending abroad, your Splitwise shares"
@@ -1146,7 +1520,7 @@ function CategoryView({
   overview: Overview
   selectedCat: number
   setSelectedCat: (id: number) => void
-  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'trips') => void
+  setView: (v: 'time' | 'category' | 'year' | 'budgets' | 'networth' | 'trips') => void
   slotFill: (id: number) => string
   onDrill: (f: DrillFilter) => void
 }) {

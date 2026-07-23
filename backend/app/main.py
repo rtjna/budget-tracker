@@ -558,6 +558,72 @@ def set_budget(body: BudgetBody, db: Session = Depends(get_db)):
     return {"category_id": body.category_id, "amount": body.amount, "effective_from": eff}
 
 
+@app.get("/api/networth")
+def stats_networth(db: Session = Depends(get_db), months: int = Query(default=12, le=60)):
+    from .stats import net_worth
+
+    return net_worth(db, months=months)
+
+
+class SnapshotBody(BaseModel):
+    account_id: int
+    date: date
+    balance: float
+
+
+@app.get("/api/snapshots")
+def list_snapshots(db: Session = Depends(get_db)):
+    accounts = {a.id: a.name for a in db.scalars(select(models.Account))}
+    rows = db.scalars(
+        select(models.BalanceSnapshot).order_by(
+            models.BalanceSnapshot.account_id, models.BalanceSnapshot.date.desc()
+        )
+    ).all()
+    return [
+        {
+            "id": s.id,
+            "account_id": s.account_id,
+            "account_name": accounts.get(s.account_id, "?"),
+            "date": s.date,
+            "balance": float(s.balance),
+        }
+        for s in rows
+    ]
+
+
+@app.put("/api/snapshots")
+def set_snapshot(body: SnapshotBody, db: Session = Depends(get_db)):
+    """Upsert a balance for one account on one date (one snapshot per day)."""
+    if db.get(models.Account, body.account_id) is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    existing = db.scalar(
+        select(models.BalanceSnapshot).where(
+            models.BalanceSnapshot.account_id == body.account_id,
+            models.BalanceSnapshot.date == body.date,
+        )
+    )
+    if existing is not None:
+        existing.balance = body.balance
+    else:
+        db.add(
+            models.BalanceSnapshot(
+                account_id=body.account_id, date=body.date, balance=body.balance
+            )
+        )
+    db.commit()
+    return {"account_id": body.account_id, "date": body.date, "balance": body.balance}
+
+
+@app.delete("/api/snapshots/{snapshot_id}")
+def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
+    snap = db.get(models.BalanceSnapshot, snapshot_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    db.delete(snap)
+    db.commit()
+    return {"deleted": snapshot_id}
+
+
 @app.post("/api/budgets/seed")
 def seed_budgets(db: Session = Depends(get_db)):
     """Set a budget for every category that lacks one, at its rounded

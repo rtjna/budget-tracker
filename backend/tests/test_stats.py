@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import Account, Budget, Category, Transaction
+from app.models import Account, BalanceSnapshot, Budget, Category, Transaction
 from app.stats import category_merchants, month_detail, monthly_overview, recurring
 
 
@@ -395,6 +395,52 @@ def test_average_category_spend():
     avgs = average_category_spend(db, months=12)
     # 180 spent across a 3-month span → 60/month.
     assert round(avgs[groceries.id]) == 60
+
+
+def test_net_worth_anchors_on_snapshot_and_reconciles():
+    from app.stats import net_worth
+
+    db, gbp, _, groceries, _ = make_db()
+    # Snapshot of £1,000 on 1 June, then £200 of spending during June.
+    db.add(BalanceSnapshot(account_id=gbp.id, date=date(2026, 6, 1), balance=1000))
+    add(db, gbp, date(2026, 6, 10), "TESCO", "-120.00", cat=groceries.id)
+    add(db, gbp, date(2026, 6, 20), "PRET", "-80.00", cat=groceries.id)
+    db.commit()
+
+    nw = net_worth(db, months=12)
+    # June month-end balance = 1000 − 200.
+    (june,) = [s for s in nw["series"] if s["month"] == "2026-06"]
+    assert june["net_worth"] == 800.0
+    assert nw["total"] == 800.0
+    (acc,) = nw["current"]
+    assert acc["name"] == "Amex" and acc["balance"] == 800.0
+
+    # A second, correct snapshot reconciles cleanly…
+    db.add(BalanceSnapshot(account_id=gbp.id, date=date(2026, 7, 1), balance=800))
+    db.commit()
+    assert net_worth(db)["discrepancies"] == []
+
+    # …but a wrong one surfaces the gap (a missing import).
+    db.query(BalanceSnapshot).filter_by(date=date(2026, 7, 1)).delete()
+    db.add(BalanceSnapshot(account_id=gbp.id, date=date(2026, 7, 1), balance=700))
+    db.commit()
+    (d,) = net_worth(db)["discrepancies"]
+    assert d["expected_change"] == -200.0 and d["actual_change"] == -300.0
+    assert d["gap"] == -100.0
+
+
+def test_net_worth_reports_accounts_without_snapshots():
+    from app.stats import net_worth
+
+    db, gbp, jpy, groceries, _ = make_db()
+    db.add(BalanceSnapshot(account_id=gbp.id, date=date(2026, 6, 1), balance=500))
+    add(db, gbp, date(2026, 6, 5), "TESCO", "-10.00", cat=groceries.id)
+    add(db, jpy, date(2026, 6, 7), "RAMEN", "-2000")  # JPY account, no snapshot
+    db.commit()
+
+    nw = net_worth(db)
+    assert "Revolut JPY" in nw["missing_snapshots"]
+    assert [c["name"] for c in nw["current"]] == ["Amex"]
 
 
 def test_month_insights_lapsed_subscription():

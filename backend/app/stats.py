@@ -13,7 +13,7 @@ from statistics import median
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Account, Budget, Category, Transaction
+from .models import Account, BalanceSnapshot, Budget, Category, Transaction
 
 # Approximate GBP conversion rates (mid-2026). Update occasionally by hand.
 GBP_RATES = {
@@ -712,6 +712,141 @@ def budget_summary(db: Session, month: str) -> dict:
         "total_spent": total_spent,
         "unbudgeted_spent": unbudgeted,
         "overall_budget": float(overall) if overall is not None else None,
+    }
+
+
+def _account_cumsum(txs: list[Transaction]):
+    """Return a function giving the signed sum of an account's transactions up
+    to and including a date — the running change in balance. Transfers are
+    included here (unlike spending): moving money out really does lower the
+    balance."""
+    dated = sorted((t.date, Decimal(t.amount)) for t in txs)
+    dates = [d for d, _ in dated]
+    prefix: list[Decimal] = [Decimal(0)]
+    for _, a in dated:
+        prefix.append(prefix[-1] + a)
+
+    def cumsum(on: date) -> Decimal:
+        # transactions with date <= `on`
+        lo, hi = 0, len(dates)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if dates[mid] <= on:
+                lo = mid + 1
+            else:
+                hi = mid
+        return prefix[lo]
+
+    return cumsum
+
+
+def net_worth(db: Session, months: int = 12) -> dict:
+    """Net worth over time, anchored on manually entered balance snapshots.
+
+    For an account with a snapshot, balance on any date d is
+    snapshot.balance + (cumsum(d) − cumsum(snapshot.date)); summed across
+    accounts (in GBP) that gives the net-worth line. Accounts without a
+    snapshot are unknown and reported so the UI can nudge for one.
+
+    Two snapshots on one account also give a reconciliation check: the change
+    they show should equal the transactions between them; a mismatch means
+    missing imports."""
+    accounts = {a.id: a for a in db.scalars(select(Account))}
+    snaps: dict[int, list[BalanceSnapshot]] = defaultdict(list)
+    for s in db.scalars(select(BalanceSnapshot).order_by(BalanceSnapshot.date)):
+        snaps[s.account_id].append(s)
+
+    txs_by_account: dict[int, list[Transaction]] = defaultdict(list)
+    for t in db.scalars(select(Transaction)):
+        txs_by_account[t.account_id].append(t)
+    cumsums = {aid: _account_cumsum(txs) for aid, txs in txs_by_account.items()}
+
+    def balance_at(aid: int, on: date) -> Decimal | None:
+        ref = snaps.get(aid)
+        if not ref:
+            return None
+        anchor = ref[-1]  # most recent snapshot is the reference point
+        cumsum = cumsums.get(aid)
+        change = (cumsum(on) - cumsum(anchor.date)) if cumsum else Decimal(0)
+        return Decimal(anchor.balance) + change
+
+    # Month-end series over the trailing window.
+    all_months = sorted({t.date.strftime("%Y-%m") for t in db.scalars(select(Transaction))})
+    keys = _calendar_window(all_months, months)
+    today = date.today()
+    series = []
+    unconvertible = set()
+    for m in keys:
+        y, mm = map(int, m.split("-"))
+        month_end = date(y + (mm == 12), mm % 12 + 1, 1) - timedelta(days=1)
+        if month_end > today:
+            month_end = today
+        total = Decimal(0)
+        counted = 0
+        for aid, acc in accounts.items():
+            bal = balance_at(aid, month_end)
+            if bal is None:
+                continue
+            if acc.currency not in GBP_RATES:
+                unconvertible.add(acc.currency)
+                continue
+            total += to_gbp(bal, acc.currency)
+            counted += 1
+        if counted:
+            series.append({"month": m, "net_worth": float(total)})
+
+    # Current balances per account, for the breakdown.
+    current = []
+    for aid, acc in accounts.items():
+        bal = balance_at(aid, today)
+        if bal is None:
+            continue
+        gbp = float(to_gbp(bal, acc.currency)) if acc.currency in GBP_RATES else None
+        current.append(
+            {
+                "account_id": aid,
+                "name": acc.name,
+                "kind": acc.kind,
+                "currency": acc.currency,
+                "balance": float(bal),
+                "balance_gbp": gbp,
+                "as_of": snaps[aid][-1].date,
+            }
+        )
+    current.sort(key=lambda c: -(c["balance_gbp"] or 0))
+
+    # Reconciliation: consecutive snapshot pairs whose delta disagrees with the
+    # transactions between them.
+    discrepancies = []
+    for aid, ss in snaps.items():
+        cumsum = cumsums.get(aid)
+        for a, b in zip(ss, ss[1:]):
+            expected = (cumsum(b.date) - cumsum(a.date)) if cumsum else Decimal(0)
+            actual = Decimal(b.balance) - Decimal(a.balance)
+            gap = actual - expected
+            if abs(gap) > Decimal("0.01"):
+                discrepancies.append(
+                    {
+                        "account_id": aid,
+                        "name": accounts[aid].name,
+                        "from": a.date,
+                        "to": b.date,
+                        "expected_change": float(expected),
+                        "actual_change": float(actual),
+                        "gap": float(gap),
+                    }
+                )
+
+    missing = sorted(
+        acc.name for aid, acc in accounts.items() if aid not in snaps and txs_by_account.get(aid)
+    )
+    return {
+        "series": series,
+        "current": current,
+        "total": float(sum((c["balance_gbp"] or 0) for c in current)),
+        "missing_snapshots": missing,
+        "discrepancies": discrepancies,
+        "excluded_currencies": sorted(unconvertible),
     }
 
 
