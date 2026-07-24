@@ -9,6 +9,25 @@ Single-user, non-commercial. See [ROADMAP.md](ROADMAP.md) for the plan,
 [PRIVACY.md](PRIVACY.md) for the privacy notice, and [TERMS.md](TERMS.md)
 for terms of use.
 
+![Dashboard: monthly KPIs, spending stacked by category, and the "what changed" panel](docs/screenshots/dashboard.png)
+
+![Budgets: per-category limits with a mid-month pace marker](docs/screenshots/budgets.png)
+
+*Screenshots show generated demo data ([scripts/seed_demo.py](scripts/seed_demo.py)) — never real finances.*
+
+## Try it with demo data
+
+No bank exports needed — seed a fictional-but-realistic dataset and browse:
+
+```sh
+DATA_DIR=/tmp/budget-demo backend/.venv/bin/python scripts/seed_demo.py
+DATA_DIR=/tmp/budget-demo STATIC_DIR=frontend/dist \
+  backend/.venv/bin/uvicorn app.main:app --app-dir backend --port 8000
+```
+
+Then open http://localhost:8000. (Requires the venv and a built frontend —
+see "Running" below. The seeder refuses to touch an existing database.)
+
 ## What it does
 
 **Getting data in**
